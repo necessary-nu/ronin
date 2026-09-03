@@ -20,7 +20,7 @@ use make_mode::{invoked_as, make_command, peak_concurrency, test_directory};
 
 #[cfg(all(unix, feature = "make"))]
 // [spec:ronin:req:make.jobserver+2/test]
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn recursive_make_tree_uses_one_budget() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];

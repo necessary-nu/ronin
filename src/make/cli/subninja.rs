@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 /// Resolve one expanded recursive recipe into another kati compilation unit.
-// [spec:ronin:req:make.recursive-invocation+2]
+// [spec:ronin:req:make.recursive-invocation+3]
 pub(in crate::make) fn compile(
     command: &[u8],
     expanded_make: &[u8],
@@ -112,6 +112,9 @@ pub(in crate::make) fn compile(
             root_directory: parent.root_directory.clone(),
             directory,
             path_prefix,
+            // What the parent's composition makes around its children; the
+            // parent narrows it per recipe before compiling the child.
+            enclosing: std::sync::Arc::clone(&parent.enclosing),
             makeflags,
             always_make: parent.always_make,
             restarted: parent.restarted,

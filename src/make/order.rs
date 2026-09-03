@@ -217,7 +217,7 @@ impl SerialJobs {
     pub(super) fn push(&mut self, wrapper: Edge, children: &[ChildGroup], completion: Vec<Node>) {
         let fresh = children.iter().filter(|group| group.fresh);
         let edges = std::iter::once(wrapper)
-            .chain(fresh.flat_map(|group| group.subgraph.edges.iter().copied()))
+            .chain(fresh.flat_map(|group| group.subgraph.fresh_edges.iter().copied()))
             .collect();
         self.0.push(sink::SerialJob { completion, edges });
     }
@@ -233,5 +233,24 @@ impl SerialJobs {
     /// [`dependency_ordered`]'s order, exactly as before.
     pub(super) fn chain(&self, sink: &mut GraphSink) {
         sink.chain_serial_jobs(&self.0);
+    }
+}
+
+/// Take what one recipe's children contribute into the unit's closure, and
+/// what the ones this recipe composed made into what the unit made.
+pub(super) fn adopt_child_groups(
+    child_groups: Vec<ChildGroup>,
+    subtree_edges: &mut Vec<Edge>,
+    fresh_edges: &mut Vec<Edge>,
+) {
+    for group in child_groups {
+        if group.fresh {
+            fresh_edges.extend(group.subgraph.fresh_edges.iter().copied());
+        }
+        for edge in group.subgraph.edges {
+            if !subtree_edges.contains(&edge) {
+                subtree_edges.push(edge);
+            }
+        }
     }
 }

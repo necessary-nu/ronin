@@ -157,7 +157,7 @@ fn make_populates_suffix_rule_stem() {
 /// loop. Such a command cannot be composed as a semantic subninja, so the real
 /// child process learns the override from the canonical MAKEFLAGS exported to
 /// every recipe.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn shell_loop_submake_inherits_overrides() {
     let directory = test_directory("shell-loop-overrides");
@@ -194,7 +194,7 @@ fn shell_loop_submake_inherits_overrides() {
 /// Zstd selects a recursive build directory with a deferred `$(shell ...)`.
 /// Kati deliberately leaves that computation as shell command substitution in
 /// a recipe, so Ronin must settle it before parsing the child invocation.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn submake_expands_shell_computed_assignment() {
     let directory = test_directory("submake-shell-assignment");
@@ -220,7 +220,7 @@ fn submake_expands_shell_computed_assignment() {
 
 /// Deferred command substitution must observe files made by the recursive
 /// wrapper's prerequisites, not run during the provisional graph compilation.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn submake_shell_waits_for_prerequisite() {
     let directory = test_directory("submake-shell-boundary");
@@ -386,7 +386,7 @@ fn an_unmoved_stamp_rebuilds_nothing() {
 /// cascades through everything reading the target, on every invocation for
 /// ever. It cost zsh a `zutil.c` compile and a `zutil.so` link a build.
 // [spec:ronin:req:make.remade-target-re-observed/test]
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn a_forced_recursion_that_moves_nothing_rebuilds_nothing() {
     let directory = test_directory("forced-recursion-no-cascade");
@@ -1426,7 +1426,7 @@ fn make_reports_a_missing_program() {
 /// vim's top-level Makefile is the tree that showed it — one liftable
 /// `cd src && $(MAKE) $@` beside two guards holding `$(MAKE)` calls that are
 /// false for every goal but `test` and `clean` — and it built nothing at all.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn an_unliftable_line_keeps_its_siblings() {
     let directory = test_directory("make-recursion-guard");
@@ -1507,7 +1507,7 @@ fn an_unliftable_line_keeps_its_siblings() {
 /// Proved by a dry run rather than by the build: a composed child's work is
 /// printed and not done, where a nested Make would have been started to find
 /// out what it was.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn a_subshell_holds_one_invocation() {
     let directory = test_directory("make-recursion-subshell");
@@ -1547,7 +1547,7 @@ fn a_subshell_holds_one_invocation() {
 ///
 /// Proved the same way as the subshell: a dry run prints the composed child's
 /// work, where a nested Make would have been started to find out what it was.
-// [spec:ronin:req:make.recursive-invocation+2/test]
+// [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn a_brace_group_holds_one_invocation() {
     let directory = test_directory("make-recursion-brace");
@@ -3379,5 +3379,355 @@ fn a_held_recursive_recipe_holds_its_readers() {
             directory.join("modules.installed").exists(),
             "the {label} chain never reached its last recipe"
         );
+    }
+}
+
+/// zsh's shape, from all four of its Makefiles: every child is reached
+/// through `for subdir in …; do (cd $$subdir && $(MAKE) …) || exit 1; done`,
+/// and every one of them forked a Make of its own. Read as the shell reads
+/// it, the loop is two invocations in order, each only after the last one
+/// finished and never after it failed — which is what the graph's `&&` join
+/// already means — so it composes, and a dry run prints the children's own
+/// recipes where a nested Make would have been started to find them.
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn a_loop_over_literal_words_composes_each_iteration() {
+    for (label, line) in [
+        (
+            "literal",
+            "\tfor subdir in a b; do (cd $$subdir && $(MAKE) child) || exit 1; done\n",
+        ),
+        // Src/Makefile's spelling: the word list settled by an assignment
+        // earlier on the line, expanded unquoted and so split into words.
+        (
+            "assigned",
+            "\t@subdirs='a b'; for subdir in $$subdirs; do \\\n\
+             \t  (cd $$subdir && $(MAKE) child) || exit 1; \\\n\
+             \tdone\n",
+        ),
+        // The kernel's `__build_one_by_one`: a bare loop, made to stop at its
+        // first failed iteration by the `set -e` the line opens with.
+        (
+            "errexit",
+            "\tset -e; for i in a b; do $(MAKE) -C $$i child; done\n",
+        ),
+    ] {
+        let directory = test_directory(&format!("loop-composes-{label}"));
+        for child in ["a", "b"] {
+            fs::create_dir_all(directory.join(child)).unwrap();
+            fs::write(
+                directory.join(child).join("Makefile"),
+                format!("child: ; echo {child} > built-{child}\n"),
+            )
+            .unwrap();
+        }
+        fs::write(directory.join("Makefile"), format!("all:\n{line}")).unwrap();
+
+        // The first iteration's child is composed, and a dry run prints its
+        // recipe as the graph's own edge. The second is read off what the
+        // first left behind, which a dry run never builds, so it is not in
+        // the dry run at all — as it is not for `$(MAKE) -C a && $(MAKE) -C
+        // b`; see a-recipe-of-two-composed-invocations-prints-one-under-n.
+        let dry = make_command(&directory).arg("-n").output().unwrap();
+        assert!(
+            dry.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&dry.stderr)
+        );
+        let printed = String::from_utf8_lossy(&dry.stdout);
+        assert!(
+            printed.contains("echo a > built-a"),
+            "{label}: the first child's recipe was not composed into the dry run: {printed}"
+        );
+        for child in ["a", "b"] {
+            assert!(
+                !directory
+                    .join(child)
+                    .join(format!("built-{child}"))
+                    .exists(),
+                "{label}: the dry run wrote {child}'s target"
+            );
+        }
+
+        let built = make_command(&directory).output().unwrap();
+        assert!(
+            built.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        for child in ["a", "b"] {
+            assert!(
+                directory
+                    .join(child)
+                    .join(format!("built-{child}"))
+                    .exists(),
+                "{label}: {child} was not built"
+            );
+        }
+    }
+}
+
+/// `for … do (…) || exit 1; done` is sequential with early abort: the shell
+/// runs iteration two only after iteration one finished, and `exit 1` ends
+/// the line when one fails. Composed, the second child's edges wait on the
+/// first child's targets through order-only inputs that are NOT forgiven, so
+/// a failed first child withholds the second — at `-j1`, at `-j8`, and under
+/// `-k`, where GNU Make 4.4.1 still stops the loop and goes on to build the
+/// unrelated target. Probed: `a` built, `b` absent and status 2 at both job
+/// counts; under `-k all other`, `b` absent and `other` built.
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn a_failed_iteration_stops_the_loop() {
+    let directory = test_directory("loop-aborts");
+    for child in ["a", "b"] {
+        fs::create_dir_all(directory.join(child)).unwrap();
+    }
+    fs::write(
+        directory.join("a").join("Makefile"),
+        "child: ; : > built; exit 3\n",
+    )
+    .unwrap();
+    fs::write(directory.join("b").join("Makefile"), "child: ; : > built\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \tfor d in a b; do (cd $$d && $(MAKE) child) || exit 1; done\n\
+         other:\n\
+         \t: > other.done\n",
+    )
+    .unwrap();
+
+    for jobs in ["-j1", "-j8"] {
+        for child in ["a", "b"] {
+            let _ = fs::remove_file(directory.join(child).join("built"));
+        }
+        let output = make_command(&directory)
+            .args([jobs, "all"])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{jobs}: a failed child did not fail the build"
+        );
+        assert!(
+            directory.join("a").join("built").exists(),
+            "{jobs}: a did not run"
+        );
+        assert!(
+            !directory.join("b").join("built").exists(),
+            "{jobs}: b ran after a failed, where the loop would have stopped"
+        );
+    }
+
+    // Under -k, GNU Make 4.4.1 builds `other` beside the failed loop. Ronin
+    // stops at the failed staged group before `other` is scheduled, for a
+    // loop exactly as for `$(MAKE) -C a && $(MAKE) -C b` — see
+    // a-failed-staged-group-stops-keep-going-short-of-other-goals — so what
+    // is held here is the loop's own half: `b` is never reached.
+    for child in ["a", "b"] {
+        let _ = fs::remove_file(directory.join(child).join("built"));
+    }
+    let output = make_command(&directory)
+        .args(["-k", "all", "other"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        !directory.join("b").join("built").exists(),
+        "-k reached b after a failed: keep-going is Make's and not the shell line's"
+    );
+}
+
+/// GNU Make runs the loop's iterations one after another, and `-j8` gives the
+/// composed children no licence to overlap: the second waits for the first to
+/// finish. `ranlog` reads `a` then `b` and never `OVERLAP`, which is what 4.4.1
+/// writes on this tree at `-j8`.
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn loop_iterations_run_one_at_a_time() {
+    let directory = test_directory("loop-serial");
+    for child in ["a", "b"] {
+        fs::create_dir_all(directory.join(child)).unwrap();
+        fs::write(
+            directory.join(child).join("Makefile"),
+            format!(
+                "child:\n\
+                 \t@if [ -e ../busy ]; then echo OVERLAP >> ../ranlog; fi; : > ../busy; \\\n\
+                 \t sleep 1; rm -f ../busy; echo {child} >> ../ranlog\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\tfor d in a b; do (cd $$d && $(MAKE) child) || exit 1; done\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ran = fs::read_to_string(directory.join("ranlog")).unwrap();
+    assert_eq!(
+        ran, "a\nb\n",
+        "the iterations did not run in order, one at a time"
+    );
+}
+
+/// A `cd` outside a subshell is the shell's own and reaches the next
+/// iteration: `for d in a b; do cd $$d && $(MAKE) …; done` enters `a` and then
+/// `a/b`, which is exactly what 4.4.1 does with it — probed: both `a/built`
+/// and `a/b/built` made. The subshell form leaves each iteration where the
+/// line started, and the two must not be read as one shape.
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn a_bare_cd_in_a_loop_accumulates() {
+    let directory = test_directory("loop-bare-cd");
+    fs::create_dir_all(directory.join("a").join("b")).unwrap();
+    fs::create_dir_all(directory.join("b")).unwrap();
+    for child in ["a", "a/b", "b"] {
+        fs::write(
+            directory.join(child).join("Makefile"),
+            "child: ; : > built\n",
+        )
+        .unwrap();
+    }
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\tfor d in a b; do cd $$d && $(MAKE) child || exit 1; done\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.join("a").join("built").exists());
+    assert!(
+        directory.join("a").join("b").join("built").exists(),
+        "the second iteration did not enter a/b, where the shell's cd left it"
+    );
+    assert!(
+        !directory.join("b").join("built").exists(),
+        "the second iteration entered b from the top, as a subshell would have"
+    );
+}
+
+/// The hard boundary: a word list computed by a command substitution is known
+/// only by running it, so the loop is not lifted — and the line still runs as
+/// written, with the nested Make it names, so the tree still builds.
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn a_substituted_word_list_stays_nested_and_builds() {
+    let directory = test_directory("loop-substituted");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "child: ; : > built\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \t@target=`echo child-recursive | sed s/-recursive//`; \\\n\
+         \tfor d in sub; do (cd $$d && $(MAKE) $$target) || exit 1; done\n",
+    )
+    .unwrap();
+
+    // Nested: the dry run runs the line, as GNU Make runs a classified line
+    // under -n, and the nested Make prints its own child's recipe.
+    let dry = make_command(&directory).arg("-n").output().unwrap();
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert!(!directory.join("sub").join("built").exists());
+
+    let built = make_command(&directory).output().unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert!(directory.join("sub").join("built").exists());
+}
+
+/// zsh's tree, reduced to the shape that stopped it building once its loops
+/// composed. Two loops over the same subdirectories, one per phase; `m`
+/// reaches `z` through a recipe with a `FORCE` prerequisite, and reaches it
+/// again in the second phase; `b` and `z` each carry a stub rule —
+/// `../hdr: ; false`, zsh's `$(dir_top)/Src/zsh.mdh: ; false # should only
+/// happen with make -n` — for a file the parent makes; and `.NOTPARALLEL` at
+/// the top chains the phases. GNU Make 4.4.1 builds it: six files, no stub
+/// ever run, because each child process finds the parent's file made.
+///
+/// Composed into one graph this closed a cycle and then ran a stub. The cycle:
+/// the one copy of `z`'s work, composed in the first phase, was fenced again
+/// behind the second phase's `FORCE`, which the loop had ordered behind `b`,
+/// which needs the file whose recipe reaches `z`. Only the composition that
+/// made an edge sequences it now — [`UnitSubgraph::fresh_edges`]. The stub: a
+/// child's private node for a file the parent makes had the stub as its only
+/// generator and ran it beside the parent's rule. A child's name for a path an
+/// enclosing unit makes is now that unit's node, and its own rule for the path
+/// is not read — `GraphSink::begin_subninja`.
+///
+/// [`UnitSubgraph::fresh_edges`]: crate::make::sink::UnitSubgraph
+// [spec:ronin:req:make.recursive-invocation+3/test]
+#[test]
+fn a_shared_grandchild_and_a_parents_stub_compose() {
+    let directory = test_directory("loop-shared-grandchild");
+    for child in ["b", "m", "z"] {
+        fs::create_dir_all(directory.join(child)).unwrap();
+    }
+    fs::write(
+        directory.join("b").join("Makefile"),
+        "headers: ; : > h\n\
+         modules: x.o ; : > modules\n\
+         x.o: ../hdr ; : > x.o\n\
+         ../hdr: ; false\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("m").join("Makefile"),
+        "headers: ../z/c ; : > h\n\
+         modules: m.o ; : > modules\n\
+         m.o: ../z/c ; : > m.o\n\
+         ../z/c: FORCE ; cd ../z && $(MAKE) c\n\
+         FORCE:\n\
+         .PHONY: FORCE\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("z").join("Makefile"),
+        "c: ../hdr ; : > c\n../hdr: ; false\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".NOTPARALLEL:\n\
+         all: headers modules\n\
+         headers: hdr ; for d in b m; do (cd $$d && $(MAKE) headers) || exit 1; done\n\
+         modules: ; for d in b m; do (cd $$d && $(MAKE) modules) || exit 1; done\n\
+         hdr: ; : > hdr\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{said}");
+    assert!(!said.contains("dependency cycle"), "{said}");
+    assert!(
+        !said.contains("] false"),
+        "a child's stub for the parent's file ran: {said}"
+    );
+    for made in ["hdr", "b/h", "b/modules", "m/h", "m/modules", "z/c"] {
+        assert!(directory.join(made).exists(), "{made} was not built");
     }
 }

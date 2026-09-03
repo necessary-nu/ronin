@@ -178,6 +178,7 @@ dependencies = [
  "libc",
  "log",
  "memchr",
+ "nsh",
  "os_pipe",
  "parking_lot",
  "tikv-jemallocator",
@@ -234,7 +235,7 @@ dependencies = [
 [[package]]
 name = "nsh"
 version = "0.1.0"
-source = "git+https://github.com/necessary-nu/nsh?branch=master#9c3f34344b2207d98fe377713960d75161ec7460"
+source = "git+https://github.com/necessary-nu/nsh?branch=master#6d9539c66fd7b196c7225b95851c8baeee5d9d1d"
 dependencies = [
  "bstr",
  "nsh-platform",
@@ -243,7 +244,7 @@ dependencies = [
 [[package]]
 name = "nsh-platform"
 version = "0.1.0"
-source = "git+https://github.com/necessary-nu/nsh?branch=master#9c3f34344b2207d98fe377713960d75161ec7460"
+source = "git+https://github.com/necessary-nu/nsh?branch=master#6d9539c66fd7b196c7225b95851c8baeee5d9d1d"
 dependencies = [
  "libc",
  "ntapi",

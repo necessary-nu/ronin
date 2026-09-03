@@ -23,6 +23,7 @@
 pub use kati;
 
 pub(crate) mod cli;
+mod enclosing;
 mod interrupts;
 mod layout;
 mod order;
@@ -221,6 +222,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             root_directory: directory.clone(),
             directory,
             path_prefix: PathBuf::new(),
+            enclosing: std::sync::Arc::default(),
             makeflags: environment_value("MAKEFLAGS").unwrap_or_default(),
             // No invocation to have carried the switch: this entry compiles a
             // Makefile for a caller that runs the graph itself.
@@ -290,6 +292,12 @@ pub(crate) struct CompilationContext {
     pub(crate) root_directory: PathBuf,
     pub(crate) directory: PathBuf,
     pub(crate) path_prefix: PathBuf,
+    /// The files the units enclosing the children of this compilation make,
+    /// by canonical path, and the nodes they make them at — what a child's
+    /// name for one of them resolves to. Set by [`compile_unit`] for the
+    /// children it composes; empty for the root. See
+    /// [`GraphSink::begin_subninja`].
+    pub(crate) enclosing: std::sync::Arc<sink::Enclosing>,
     pub(crate) makeflags: String,
     /// Whether `-B` is in force: every target with a recipe is out of date.
     ///
@@ -804,7 +812,7 @@ enum EvaluationPredecessor {
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
 /// shared graph before returning it to the executor.
-// [spec:ronin:req:make.recursive-invocation+2]
+// [spec:ronin:req:make.recursive-invocation+3]
 // [spec:ronin:req:make.compiler-boundary]
 pub(crate) fn load_with_subninjas(
     root: Compilation,
@@ -881,6 +889,7 @@ fn load_with_subninjas_unlocked(
         ChildUnit::Unread(Box::new(root)),
         &mut sink,
         None,
+        &std::sync::Arc::default(),
         resolve,
         &mut state,
     )?;
@@ -943,6 +952,7 @@ fn read_unit(
     prepared: Prepared,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
+    enclosing: &std::sync::Arc<sink::Enclosing>,
     context: &CompilationContext,
     reaper: Option<&parallel::Reaper>,
 ) -> Result<UnitRead, MakeError> {
@@ -963,6 +973,7 @@ fn read_unit(
             parent,
             context.path_prefix.clone(),
             context.directory.clone(),
+            std::sync::Arc::clone(enclosing),
         );
     }
     sink.serialise_unit(ev.session.flags.not_parallel);
@@ -1040,6 +1051,7 @@ fn compile_unit(
     child: ChildUnit,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
+    enclosing: &std::sync::Arc<sink::Enclosing>,
     resolve: Resolver,
     state: &mut CompilationState<'_>,
 ) -> Result<CompiledUnit, MakeError> {
@@ -1091,7 +1103,7 @@ fn compile_unit(
     };
     let read = evaluated.and_then(|evaluated| {
         in_directory(&context.directory, || {
-            read_unit(evaluated, sink, parent_scope, &context, reaper)
+            read_unit(evaluated, sink, parent_scope, enclosing, &context, reaper)
         })
     });
     let UnitRead {
@@ -1116,7 +1128,12 @@ fn compile_unit(
     state.pending_recipes.admit_settled(settled_edges);
     state.admit(unit_remakes);
 
+    let mut unit = unit;
     let mut descendant_context = context;
+    // What this unit's children see made around them: what encloses this
+    // unit, and the files this unit itself makes.
+    descendant_context.enclosing =
+        enclosing::for_children(enclosing, std::mem::take(&mut unit.generated));
     descendant_context.makeflags.clone_from(&makeflags);
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
@@ -1168,8 +1185,13 @@ fn compose_subninjas(
         subninjas,
         edges,
         serial: not_parallel,
+        // Taken by `compile_unit`, into the context the children read.
+        generated: _,
     } = unit;
     let mut subtree_edges = edges;
+    // What this compilation made, as against what it reached: its own edges,
+    // then each recipe's wrapper and the children that recipe composed.
+    let mut fresh_edges = subtree_edges.clone();
     let disk = freshness_disk(descendant_context, state)?;
     let (ordered, mut holds) = order::dependency_ordered(subninjas, sink);
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
@@ -1327,16 +1349,14 @@ fn compose_subninjas(
             compilation_key: compilation_key.to_vec(),
             pending_index,
         });
-        for edge in child_groups.into_iter().flat_map(|c| c.subgraph.edges) {
-            if !subtree_edges.contains(&edge) {
-                subtree_edges.push(edge);
-            }
-        }
+        order::adopt_child_groups(child_groups, &mut subtree_edges, &mut fresh_edges);
         subtree_edges.push(wrapper);
+        fresh_edges.push(wrapper);
     }
     Ok(settled_unit(
         targets,
         subtree_edges,
+        fresh_edges,
         &holds,
         &serial_jobs,
         sink,
@@ -1349,20 +1369,29 @@ fn compose_subninjas(
 fn settled_unit(
     targets: Vec<Node>,
     edges: Vec<Edge>,
+    fresh_edges: Vec<Edge>,
     holds: &order::Holds,
     serial_jobs: &order::SerialJobs,
     sink: &mut GraphSink,
 ) -> ComposedUnit {
     if holds.any() {
         return ComposedUnit {
-            subgraph: UnitSubgraph { targets, edges },
+            subgraph: UnitSubgraph {
+                targets,
+                edges,
+                fresh_edges,
+            },
             complete: false,
         };
     }
     // [spec:ronin:req:make.notparallel-domain]
     serial_jobs.chain(sink);
     ComposedUnit {
-        subgraph: UnitSubgraph { targets, edges },
+        subgraph: UnitSubgraph {
+            targets,
+            edges,
+            fresh_edges,
+        },
         complete: true,
     }
 }
@@ -1467,7 +1496,8 @@ fn compose_child_groups(
             return Ok(None);
         } else {
             let child_scope = pending.scope;
-            let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
+            let enclosing = enclosing::for_the_child_of(&descendant_context.enclosing, pending);
+            let child = compile_unit(child, sink, Some(child_scope), &enclosing, resolve, state)?;
             if !child.complete {
                 state.unfinished_units.insert(child_key);
                 return Ok(None);
@@ -1608,6 +1638,7 @@ fn unreadable_child(
         subgraph: UnitSubgraph {
             targets: Vec::new(),
             edges: Vec::new(),
+            fresh_edges: Vec::new(),
         },
         fresh: true,
     }

@@ -231,7 +231,7 @@ manifest-derived graph is.
 > description there and leaves its reader Ninja's own repair, which is why the
 > equivalence gate treats that description as destination-specific.
 
-> [spec:ronin:req:make.recursive-invocation+2]
+> [spec:ronin:req:make.recursive-invocation+3]
 > A recursive invocation through `$(MAKE)` that the compiler can statically
 > identify compiles as `subninja`, and it MUST: composition is not optional
 > wherever the identification is possible. Kati evaluates the child Makefile
@@ -239,6 +239,21 @@ manifest-derived graph is.
 > graph-affecting flags, then composes the resulting graph into the parent
 > graph before execution. `subninja` names this semantic graph inclusion even
 > when the direct in-memory path emits no manifest text.
+>
+> What can be identified is decided by reading the recipe line as the shell
+> that runs it reads it, and admitting exactly the lines whose meaning is a
+> list of composed children: each child runs after the last one finished and
+> never after it failed, and the recipe fails when one fails. A line that is an
+> invocation, one entered through `cd DIR &&`, a chain of those joined by
+> `&&`, a `for` over words the line settles whose body ends each iteration in
+> `|| exit`, or runs under errexit, and an `if` whose condition the line
+> settles all mean that; a `;` between invocations, a loop that carries on
+> past a failed iteration, a `||` whose other side is not an `exit`, a word
+> the disk would have to match, a command substitution deciding what the line
+> does, and a shell variable the line never gave a value do not, and refuse.
+> The shell's state a line settles for itself — the variables it assigned
+> literal values, the directory it changed into, whether `set -e` is armed —
+> is read; nothing is run to find out.
 >
 > An invocation the compiler cannot statically identify is left as the shell
 > command it is, and runs. That remainder is a boundary and not a licence: it
@@ -249,6 +264,18 @@ manifest-derived graph is.
 > all is not answerable until the shell answers it. Every widening of what the
 > compiler can prove shrinks the remainder, and no shape belongs in it merely
 > for being hard to lift.
+>
+> A composed child's targets are its own — two units may each define `all` —
+> save for a FILE an enclosing unit makes: GNU Make's child process finds that
+> file made, because the parent's phase that made it ran before the recipe
+> that started the child, so a child's name for such a path is a name for the
+> enclosing unit's node and depends on that producer, and a rule of the
+> child's own for it — zsh's `$(dir_top)/Src/zsh.mdh: ; false # should only
+> happen with make -n` — is not read. Within one recipe, a later child's work
+> waits on the child before it; across a `.NOTPARALLEL` unit's recipes, on the
+> recipe before it; and in both cases only the work a composition itself made
+> is sequenced, because a child two compositions reach is one copy of one
+> piece of work, ordered by the composition that made it.
 >
 > What starts there is Ronin re-entering Make mode by its invoked name — the
 > absolutized `make`-named path that `$(MAKE)` expands to — and compiling its
@@ -330,10 +357,14 @@ manifest-derived graph is.
 > GNU Make 4.4.1 sets a wait point between the named targets' prerequisites and
 > leaves `not_parallel` clear. Only the bare form is read.
 
-> [spec:ronin:req:make.nesting-census+2]
+> [spec:ronin:req:make.nesting-census+3]
 > Linting a Makefile reports every recursive invocation the compile
 > classified, each with the Makefile and line it was written on and whether it
-> was composed into the graph or left to nest at run time. A composed
+> was composed into the graph, left to nest at run time, or settled as never
+> starting — an invocation under a guard the line decides against, which the
+> build neither composes nor runs and a report still names, because a census
+> that dropped it would no longer name every recursion the Makefile wrote. A
+> composed
 > invocation names the child it composed, with the `MAKE` reference written
 > back in place of the path it expanded to, because the path is this process
 > and says nothing a reader did not know. A long one is cut in the middle
@@ -342,18 +373,23 @@ manifest-derived graph is.
 > that tell one such invocation from the next — the makefile or directory it
 > selects, and the goals it asks for — sit at opposite ends of it.
 >
-> A nested one names the shape that kept it from composing, which is one of
-> three: the recipe line does not have the invocation as its own command, so a
-> shell construct stands between them; or the line's command is the invocation
-> and is written as more than the argument list the resolver reads; or the
-> recipe is a multi-line `.ONESHELL` whose lines share one shell. Each is
-> reported beside what would compose it instead, because a reader who learns
-> that a build nests and not what to change about it has learned nothing they
-> can act on. Naming the shape rather than judging it is deliberate: whether a
-> given shape belongs in the remainder
-> `[spec:ronin:req:make.recursive-invocation]` admits is a question about the
-> compiler, and a census that answered it would be arguing rather than
-> reporting.
+> A nested one names the construct that kept it from composing: the first
+> thing the compiler's reading of the line — the shell's own reading, see
+> `[spec:ronin:req:make.recursive-invocation]` — could not settle. A command
+> substitution deciding what the line does; a shell variable the line never
+> gave a value; a word the disk would have to match; a condition the line does
+> not settle; a `||` whose other side is not an `exit`; a `;` or a loop that
+> carries on past a failure; a pipeline; a redirection; an assignment or `env`
+> in front of the command; a `cd` the compiler cannot follow; another command
+> on the line; a shell form the compiler does not read; a multi-line `.ONESHELL`
+> whose lines share one shell. Each is named with what the line wrote where
+> that tells one instance from another — the variable, the command — and each
+> is reported beside what would compose it instead, because a reader who
+> learns that a build nests and not what to change about it has learned
+> nothing they can act on. Naming the construct rather than judging it is
+> deliberate: whether a given shape belongs in the remainder the invocation
+> rule admits is a question about the compiler, and a census that answered it
+> would be arguing rather than reporting.
 >
 > A recipe line the compiler classified as recursive and could not lift is in
 > the census whether or not the invocation was written where a shell would

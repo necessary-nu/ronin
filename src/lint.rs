@@ -402,7 +402,7 @@ fn makefile(
 /// knows which invocations those are and why. Every line here is read off the
 /// disposition the compile acted on, in the order it acted on them.
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.nesting-census+2]
+// [spec:ronin:req:make.nesting-census+3]
 fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String {
     use kati::census::Disposition;
 
@@ -425,6 +425,7 @@ fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String 
 
     let mut composed = 0_usize;
     let mut nested = 0_usize;
+    let mut unreached = 0_usize;
     let unread = missing.len();
     for invocation in recorded {
         let location = invocation.location.as_deref();
@@ -452,16 +453,27 @@ fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String 
             }
             Disposition::Nested(reason) => {
                 nested += 1;
-                report.raise(&Finding::warning(nesting_says(*reason)).at(location));
-                report.raise(&Finding::note(lifting_would(*reason)).at(location));
+                report.raise(&Finding::warning(nesting_says(reason)).at(location));
+                report.raise(&Finding::note(lifting_would(reason)).at(location));
+            }
+            Disposition::Unreached => {
+                unreached += 1;
+                report.raise(&Finding::note(NEVER_STARTS).at(location));
             }
             // Said above, beside the composition it belongs to.
             Disposition::MissingMakefile { .. } => {}
         }
     }
-    let total = composed + nested;
+    let total = composed + nested + unreached;
+    // A third number only where there is one to report: most censuses have
+    // nothing under a settled guard, and a column of zeros says nothing.
+    let never_started = if unreached > 0 {
+        format!(", {unreached} never started")
+    } else {
+        String::new()
+    };
     let counted = format!(
-        "{total} recursive {}: {composed} composed, {nested} nested",
+        "{total} recursive {}: {composed} composed, {nested} nested{never_started}",
         if total == 1 {
             "invocation"
         } else {
@@ -478,6 +490,13 @@ fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String 
         format!("{counted}; {unread} of them found no makefile")
     }
 }
+
+/// What the census says of a recursion it settled would never start.
+#[cfg(all(unix, feature = "make"))]
+const NEVER_STARTS: &str = concat!(
+    "recursion never starts: the invocation stands under a condition the line settles as ",
+    "false, so nothing is composed for it and nothing runs it"
+);
 
 /// What would answer a composition with no makefile where it points.
 #[cfg(all(unix, feature = "make"))]
@@ -518,22 +537,64 @@ fn named(command: &[u8]) -> String {
 }
 
 /// Why one nested invocation was not composed, in one line.
+///
+/// The reason is the compiler's own: the first construct that stopped its
+/// reading of the line from proving the line equal to a list of composed
+/// children. Named here as a reader sees the line, so that the note beside it
+/// can say what to change.
 #[cfg(all(unix, feature = "make"))]
-const fn nesting_says(reason: kati::census::NestingReason) -> &'static str {
+fn nesting_says(reason: &kati::census::NestingReason) -> String {
     use kati::census::NestingReason;
-    match reason {
-        NestingReason::ThroughAConstruct => {
-            "recursion nests at run time: the invocation is not the recipe line's own command, \
-             so a shell construct stands between them"
-        }
-        NestingReason::NotAnArgumentList => {
-            "recursion nests at run time: the line's command is the invocation, written as more \
-             than the argument list the resolver reads"
-        }
+    let what = match reason {
         NestingReason::SharedShell => {
-            "recursion nests at run time: a .ONESHELL recipe of several lines shares one shell"
+            "a .ONESHELL recipe of several lines shares one shell".to_owned()
         }
-    }
+        NestingReason::Unreadable => "the line is not POSIX shell syntax".to_owned(),
+        NestingReason::CommandSubstitution => {
+            "a command substitution decides what the line does, and what it expands to is \
+             known only by running it"
+                .to_owned()
+        }
+        NestingReason::UnresolvedParameter { name } => {
+            format!("the shell variable `{name}` has no value the line settles")
+        }
+        NestingReason::Glob => {
+            "a word would be matched against the disk, and what it matches is known only \
+             there"
+                .to_owned()
+        }
+        NestingReason::UndecidableCondition => {
+            "the invocation stands under a condition the line does not settle".to_owned()
+        }
+        NestingReason::Alternation => {
+            "`||` hands the invocation's failure to another command".to_owned()
+        }
+        NestingReason::Sequence => {
+            "`;` runs what follows whether or not the invocation failed".to_owned()
+        }
+        NestingReason::LoopCarriesOn => {
+            "the loop runs its next iteration whether or not this one failed".to_owned()
+        }
+        NestingReason::Pipeline => {
+            "a pipeline stands between the line and the invocation".to_owned()
+        }
+        NestingReason::Redirection => {
+            "a redirection changes what the invocation reads or writes".to_owned()
+        }
+        NestingReason::Prefix => {
+            "an assignment or `env` stands in front of the invocation's command".to_owned()
+        }
+        NestingReason::DirectoryChange => {
+            "a `cd` the compiler cannot follow stands in front of the invocation".to_owned()
+        }
+        NestingReason::BesideAnotherCommand { command } => {
+            format!("`{command}` runs on the line beside the invocation")
+        }
+        NestingReason::Construct { construct } => {
+            format!("{construct} stands between the line and the invocation")
+        }
+    };
+    format!("recursion nests at run time: {what}")
 }
 
 /// What would compose it instead, in one line.
@@ -542,22 +603,71 @@ const fn nesting_says(reason: kati::census::NestingReason) -> &'static str {
 /// learns that a build nests and not what to change about it has learned
 /// nothing they can act on.
 #[cfg(all(unix, feature = "make"))]
-const fn lifting_would(reason: kati::census::NestingReason) -> &'static str {
+fn lifting_would(reason: &kati::census::NestingReason) -> String {
     use kati::census::NestingReason;
     match reason {
-        NestingReason::ThroughAConstruct => {
-            "a line whose own command is the invocation composes: `$(MAKE) ...`, or \
-             `cd DIR && $(MAKE) ...`, with any test settled where the Makefile can answer it"
-        }
-        NestingReason::NotAnArgumentList => {
-            "an invocation written as words alone composes: an assignment or `env` prefix, a \
-             redirection, a glob, or an unsettled expansion is what stops this one"
-        }
         NestingReason::SharedShell => {
             "give the invocation a recipe line the rest of the recipe does not share, and it \
              composes"
         }
+        NestingReason::Unreadable => {
+            "a line the shell Ronin runs recipes with can read composes: write it in POSIX \
+             shell syntax, or give the invocation a line of its own"
+        }
+        NestingReason::CommandSubstitution => {
+            "settle the value where the Makefile can — a Make variable, or `$(shell ...)` — \
+             and the recipe line then holds only text the compiler reads"
+        }
+        NestingReason::UnresolvedParameter { .. } => {
+            "assign the variable a literal value earlier on the same line, or make it a Make \
+             variable, and the line settles it"
+        }
+        NestingReason::Glob => {
+            "spell the names out, or quote the word, and nothing is left for the disk to \
+             answer"
+        }
+        NestingReason::UndecidableCondition => {
+            "a `test` over strings the line settles is decided at compile time; a file test or \
+             a command's status is not, and belongs in the Makefile's own conditionals"
+        }
+        NestingReason::Alternation => {
+            "`|| exit 1` is the one alternative that composes: it stops the recipe, exactly as \
+             a failed child does"
+        }
+        NestingReason::Sequence => {
+            "`&&` in place of `;`, or `set -e` at the start of the line, and a failure stops \
+             the line as a failed child stops the graph"
+        }
+        NestingReason::LoopCarriesOn => {
+            "`|| exit 1` after the invocation, or `set -e` at the start of the line, and a \
+             failed iteration stops the loop as a failed child stops the graph"
+        }
+        NestingReason::Pipeline => {
+            "an invocation that is not piped anywhere composes; what it writes is the build's \
+             own output"
+        }
+        NestingReason::Redirection => {
+            "an invocation that redirects nothing composes; what it writes is the build's own \
+             output"
+        }
+        NestingReason::Prefix => {
+            "pass the value on the invocation itself, `$(MAKE) VAR=value`, where the child \
+             reads it as a Make variable"
+        }
+        NestingReason::DirectoryChange => {
+            "`cd DIR && $(MAKE) ...` with a literal directory composes, and so does the same \
+             inside a subshell"
+        }
+        NestingReason::BesideAnotherCommand { .. } => {
+            "give the other command a recipe line of its own: lines written ahead of an \
+             invocation run before its child is read, and lines after it run after"
+        }
+        NestingReason::Construct { .. } => {
+            "a line made of invocations, `cd`, assignments, `for` over literal words, `if` \
+             over settled tests and `|| exit` composes; write the rest in the Makefile"
+        }
     }
+    .to_owned()
 }
 
 /// Report on a Ninja manifest.

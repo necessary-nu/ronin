@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     // [spec:ronin:req:make.jobserver+2/test]
-    // [spec:ronin:req:make.recursive-invocation+2/test]
+    // [spec:ronin:req:make.recursive-invocation+3/test]
     fn an_inherited_jobserver_survives_a_rewritten_makeflags() {
         let inherit =
             |makeflags| Transport::inherit(jobserver::Client::new(1).unwrap(), Some(makeflags));

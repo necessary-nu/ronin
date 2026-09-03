@@ -25,6 +25,7 @@ use std::num::NonZeroUsize;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
+mod enclosing;
 mod invented;
 mod spellings;
 
@@ -184,6 +185,17 @@ struct SubninjaRule {
     diagnostic_command: Vec<u8>,
 }
 
+/// The files a set of units make, by canonical path, and the node each is
+/// made at.
+///
+/// What a child compilation is handed about the units enclosing it. A child
+/// naming one of these paths names the file the enclosing unit makes, so its
+/// name resolves to that node and depends on that producer; a rule of its own
+/// for the path is not read — see [`GraphSink::begin_subninja`]. Files only:
+/// a phony target, or one with no recipe, is nothing a child's spelling of the
+/// same name refers to — see [`GraphSink::record_generated`].
+pub(crate) type Enclosing = RapidHashMap<Vec<u8>, Node>;
+
 /// What one kati compilation unit contributed to the shared graph.
 pub(crate) struct UnitOutput {
     pub(crate) targets: Vec<Node>,
@@ -196,6 +208,9 @@ pub(crate) struct UnitOutput {
     /// unit: composing a child begins one, and that overwrites what this read
     /// left. See [`GraphSink::chain_serial_jobs`].
     pub(crate) serial: bool,
+    /// The paths this unit generates — its own edges' outputs and its
+    /// recursive wrappers' — for the children it composes to see as enclosing.
+    pub(crate) generated: Enclosing,
 }
 
 /// The targets and complete edge closure contributed by one compiled unit.
@@ -203,6 +218,20 @@ pub(crate) struct UnitOutput {
 pub(crate) struct UnitSubgraph {
     pub(crate) targets: Vec<Node>,
     pub(crate) edges: Vec<Edge>,
+    /// The edges this compilation itself made: the unit's own, its
+    /// wrappers, and those of the children it composed rather than reached.
+    ///
+    /// A child two compositions reach is one copy of one piece of work, made
+    /// by the first and merely named by the second, and only the composition
+    /// that made an edge may sequence it — behind its wrapper's
+    /// prerequisites, behind the group before it, behind the recipe before
+    /// it. zsh's `Modules` composes `Zle`'s `complete.mdh` once and reaches
+    /// it again from its `modules` goal; fencing the shared copy behind the
+    /// second wrapper's `FORCE` too pointed it back at the loop that had
+    /// already ordered it, and closed a cycle. GNU Make's second process
+    /// would have found the work done and done nothing, which is what a
+    /// copy that is sequenced once and named twice does.
+    pub(crate) fresh_edges: Vec<Edge>,
 }
 
 /// One child compilation a recursive recipe asked for, and whether this recipe
@@ -234,6 +263,13 @@ struct Unit {
     targets: Vec<Node>,
     subninjas: Vec<PendingSubninja>,
     edges: Vec<Edge>,
+    /// What the units enclosing this one generate, and the nodes they make it
+    /// at, as canonical paths. Empty for the root.
+    enclosing: std::sync::Arc<Enclosing>,
+    /// The nodes in `enclosing`, for the question a rule's outputs ask.
+    enclosing_nodes: RapidHashSet<Node>,
+    /// What this unit generates, by canonical path.
+    generated: Enclosing,
 }
 
 /// A [`BuildSink`] that builds a Ronin graph instead of a manifest.
@@ -375,6 +411,9 @@ impl GraphSink {
                 targets: Vec::new(),
                 subninjas: Vec::new(),
                 edges: Vec::new(),
+                enclosing: std::sync::Arc::default(),
+                enclosing_nodes: RapidHashSet::default(),
+                generated: Enclosing::default(),
             },
             bindings,
             phony,
@@ -400,17 +439,34 @@ impl GraphSink {
 
     /// Start emitting a child compilation unit into a scoped, path-qualified
     /// part of the same graph.
+    ///
+    /// `enclosing` is what the units this one is composed under generate. A
+    /// child's targets are otherwise its own — two units may each define
+    /// `all`, and two isolated nodes keep them apart — but a FILE an enclosing
+    /// unit makes is one file, and GNU Make's child process finds it made:
+    /// the parent's phase that made it ran before the recipe that started the
+    /// child. So a child's name for such a path resolves to the enclosing
+    /// node and depends on that producer, and a rule of the child's own for
+    /// it is not read. zsh's every subdirectory writes
+    /// `$(dir_top)/Src/zsh.mdh: ; false # should only happen with make -n`,
+    /// a stub for a file `Src` makes; read as a generator of a private node it
+    /// ran in a clean build, beside the rule that makes the file, and failed.
+    /// What is given up is the case where the child's rule would remake the
+    /// enclosing unit's file from newer prerequisites of its own, which is the
+    /// case the stub's comment says does not happen.
     pub(crate) fn begin_subninja(
         &mut self,
         parent: Scope,
         path_prefix: PathBuf,
         command_directory: PathBuf,
+        enclosing: std::sync::Arc<Enclosing>,
     ) {
         debug_assert!(self.rules.is_empty());
         debug_assert!(self.subninja_rules.is_empty());
         self.interned.clear();
         self.mentions.clear();
         self.observed_members.clear();
+        let enclosing_nodes = enclosing.values().copied().collect();
         self.unit = Unit {
             scope: self.graph.child_scope(parent),
             path_prefix,
@@ -422,6 +478,9 @@ impl GraphSink {
             targets: Vec::new(),
             subninjas: Vec::new(),
             edges: Vec::new(),
+            enclosing,
+            enclosing_nodes,
+            generated: Enclosing::default(),
         };
     }
 
@@ -545,11 +604,25 @@ impl GraphSink {
     pub(crate) fn take_unit(&mut self) -> UnitOutput {
         debug_assert!(self.rules.is_empty());
         debug_assert!(self.subninja_rules.is_empty());
+        let subninjas = std::mem::take(&mut self.unit.subninjas);
+        // A recursive wrapper's file targets are made here too — by the child
+        // it composes, through the wrapper — and a child naming one names that.
+        let mut generated = std::mem::take(&mut self.unit.generated);
+        for pending in subninjas.iter().filter(|pending| !pending.always_dirty) {
+            for output in pending
+                .explicit_outputs
+                .iter()
+                .chain(&pending.implicit_outputs)
+            {
+                generated.insert(self.graph.path(*output).to_vec(), *output);
+            }
+        }
         UnitOutput {
             targets: std::mem::take(&mut self.unit.targets),
-            subninjas: std::mem::take(&mut self.unit.subninjas),
+            subninjas,
             edges: std::mem::take(&mut self.unit.edges),
             serial: self.unit.serial_pool.is_some(),
+            generated,
         }
     }
 
@@ -590,7 +663,7 @@ impl GraphSink {
     /// could have started, while the child's own timestamps still decide what
     /// work it needs. The wrapper becomes a phony alias for child targets whose
     /// identities remain local to their own recursive compilation units.
-    // [spec:ronin:req:make.recursive-invocation+2]
+    // [spec:ronin:req:make.recursive-invocation+3]
     ///
     /// `begun` is whether the recipe has already run part of itself at a
     /// compilation boundary, which the finished edge has to carry: one of
@@ -608,6 +681,11 @@ impl GraphSink {
         // Each child group waits for the parent, and then for the group before
         // it: GNU Make runs a recipe's lines in the order they were written, so
         // the Make a later invocation starts reads whatever an earlier one left.
+        //
+        // Only the work this recipe made waits — see
+        // [`UnitSubgraph::fresh_edges`]. A group that only reached a child
+        // another recipe composed sequences nothing: that copy was ordered by
+        // the recipe that made it.
         let mut waits = pending
             .inputs
             .iter()
@@ -622,8 +700,10 @@ impl GraphSink {
                 .copied()
                 .filter(|wait| !child.targets.contains(wait))
                 .collect::<Vec<_>>();
-            for edge in &child.edges {
-                self.graph.add_order_only_inputs(*edge, &preceding);
+            if group.fresh {
+                for edge in &child.fresh_edges {
+                    self.graph.add_order_only_inputs(*edge, &preceding);
+                }
             }
             for target in &child.targets {
                 if !child_targets.contains(target) {
@@ -902,6 +982,16 @@ impl GraphSink {
         };
         match node {
             Ok(node) => {
+                // A path an enclosing unit makes is that unit's file, and the
+                // child's name for it is a name for that node. The isolated
+                // node just allocated was the way to learn the canonical path;
+                // nothing refers to it. See [`Self::begin_subninja`].
+                let node = if self.unit.root {
+                    node
+                } else {
+                    let path = self.graph.path(node);
+                    self.unit.enclosing.get(path).copied().unwrap_or(node)
+                };
                 self.interned.insert(symbol, node);
                 Ok(node)
             }
@@ -1564,6 +1654,9 @@ impl BuildSink for GraphSink {
 
         let bindings = self.edge_bindings(edge);
         let low_resolution = Self::dates_in_whole_seconds(names, edge);
+        if self.skips_an_enclosing_files_rule(edge, &outputs, &implicit_outputs) {
+            return Ok(());
+        }
         if let Some(id) = edge.rule
             && let Some(rule) = self.subninja_rules.remove(&id)
         {
@@ -1653,6 +1746,7 @@ impl BuildSink for GraphSink {
                 if mention && let Some(output) = outputs.first() {
                     self.mentions.insert(*output, built);
                 }
+                self.record_generated(edge, &outputs, &implicit_outputs);
                 self.unit.edges.push(built);
                 Ok(())
             }
