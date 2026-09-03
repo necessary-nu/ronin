@@ -21533,4 +21533,18 @@ children (
             }
         )
     }
+
+    {
+        id a-makefiles-own-makeflags-jn-cannot-resize-an-existing-budget
+        title "Resize the job budget when a makefile's own MAKEFLAGS asks for -jN"
+        kind @fix
+        log (
+            {
+                at 2026-09-03T22:58:06.067154637Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "RECORDED IN THE SPEC AS ACCEPTED, AND IT SHOULD NOT BE. `[spec:ronin:req:make.jobserver]` v2 says: \"The address is settled before the makefiles are read, where GNU Make settles it after ... Two consequences are accepted: a `$(MAKEFLAGS)` expanded during the read carries the address where GNU Make's does not yet, and a makefile's own `MAKEFLAGS += -jN` cannot resize a budget that already exists.\" The second of those is a wrong build speed, not a wording choice, and the operator's standing rule is that a divergence is a defect to fix rather than a decision to escalate. Filed on that rule, not on a fresh ruling.\n\nMEASURED, PAIRED, SAME WINDOW:\n\n  Makefile   all: ; @$(MAKE) --no-print-directory -f sub.mk sub\n  sub.mk     MAKEFLAGS += -j4\n             sub: w x y z\n             w: ; @sleep 0.5; echo w        (x, y, z alike)\n\n  invoked as `-j2`:\n    GNU 4.4.1   0.510s   \"make[1]: warning: -j4 forced in makefile: resetting jobserver mode.\" then all four at once\n    Ronin       1.022s   stays at two, 2+2\n\nEXACTLY 2x. The sub-makefile asked for four slots, GNU gave it four, Ronin gave it two.\n\nWHAT IS AND IS NOT ALREADY RIGHT. `MAKEFLAGS += -j4` in the TOP makefile with no `-j` on the command line already works — measured, completion order c/b/a matching GNU on a three-target probe. A `-j` TYPED beside an inherited address already masters a new group; the upstream inventory's `jobserver-narration` family says so and it holds. What fails is exactly the spec's own sentence: the makefile's own MAKEFLAGS, where a budget already exists.\n\nWHY IT IS STRUCTURAL RATHER THAN A MISSED CASE. Ronin compiles recipes instead of interpreting them, so a unit's MAKEFLAGS is fixed while the unit is read, and the address is settled before any makefile is read. GNU settles it after. Resizing therefore means either re-settling the budget once a read has changed it — a restart the staging machinery may already be able to carry, since a read that changes its own inputs already starts over — or standing up a second group for the resized unit the way a typed `-j` already does. Neither is designed; do not take either as the answer.\n\nTHE PERFORMANCE CONSEQUENCE IS THE CAMPAIGN'S. Any tree whose sub-makefile raises `-j` runs at the parent's budget under Ronin and at its own under GNU. On this probe that is a flat 2x, and the factor is whatever ratio the makefile asked for. Worth knowing while the perf lane is looking for a wide workload to win on: this is a way to LOSE one that has nothing to do with graph efficiency.\n\nThe other consequence in the same spec sentence — `$(MAKEFLAGS)` expanded during the read carrying the address where GNU's does not yet — is NOT filed here. It is an observation about a variable's value mid-read, and the upstream suite already classifies it under `makeflags-content` as an interface observation. This node is the budget only.\n\n`make.jobserver` will need a version bump when this lands, since the accepted-consequence paragraph is what changes."
+            }
+        )
+    }
 )
