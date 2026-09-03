@@ -1304,9 +1304,15 @@ fn compose_subninjas(
         // will actually schedule, because threading a wait into the graph a
         // staging pass builds from drags the previous recipe's whole subtree
         // into a provisional build that had no reason to want it — measured on
-        // this same tree, twice, both times exit 2. So the pass that has held
-        // a recipe composes no further child, which is exactly the set of
-        // fresh compositions the read this replaces would have made.
+        // this same tree, twice, both times exit 2. So a pass that has STOPPED
+        // INSIDE a composition composes no further child.
+        //
+        // Stopped inside, and nothing else. A pass composes as many children as
+        // it can reach — zsh's tenth pass composes twenty-seven — and a recipe
+        // merely HELD, for prerequisites not on the ground or for reading a held
+        // recipe, holds itself alone and leaves the ones after it free to
+        // compose. Only [`Holds::stopped_inside`] closes the unit, because only
+        // a stop leaves a boundary inside a copy for the next build to reach.
         if !holds.composing() {
             holds.hold(pending_index);
             continue;
