@@ -338,6 +338,12 @@ pub struct GraphSink {
     /// with it.
     mentions: RapidHashMap<Node, Edge>,
     observed_members: RapidHashMap<Symbol, Node>,
+    /// The nodes an earlier pass of this invocation has already made, gathered
+    /// as [`Self::mark_subgraphs_prebuilt`] settles them.
+    ///
+    /// Across units, because it is what one unit made that the units it
+    /// composes are asking about. See [`Self::made_and_absent`].
+    prebuilt: RapidHashSet<Node>,
     declared_pools: RapidHashSet<Vec<u8>>,
     completion_proxies: usize,
     recipe_stages: usize,
@@ -428,6 +434,7 @@ impl GraphSink {
             interned: RapidHashMap::default(),
             mentions: RapidHashMap::default(),
             observed_members: RapidHashMap::default(),
+            prebuilt: RapidHashSet::default(),
             declared_pools: RapidHashSet::default(),
             completion_proxies: 0,
             recipe_stages: 0,
@@ -454,6 +461,11 @@ impl GraphSink {
     /// What is given up is the case where the child's rule would remake the
     /// enclosing unit's file from newer prerequisites of its own, which is the
     /// case the stub's comment says does not happen.
+    ///
+    /// "Finds it made" is checked rather than assumed: an enclosing unit that
+    /// has made the path and left no file there is one whose child GNU Make
+    /// would find nothing for, and that child keeps its own rule. See
+    /// [`Self::made_and_absent`].
     pub(crate) fn begin_subninja(
         &mut self,
         parent: Scope,
@@ -627,8 +639,14 @@ impl GraphSink {
     }
 
     /// Preserve compiler-input work already run by a provisional graph.
+    ///
+    /// What it settled is remembered as well as neutered, because a child
+    /// compiled after this point is a child GNU Make would have started after
+    /// this work ran, and what that child finds on the ground is the question
+    /// [`Self::made_and_absent`] asks.
     pub(crate) fn mark_subgraphs_prebuilt(&mut self, roots: &[Node]) {
-        self.graph.mark_subgraphs_prebuilt(roots, self.phony);
+        let settled = self.graph.mark_subgraphs_prebuilt(roots, self.phony);
+        self.prebuilt.extend(settled);
     }
 
     /// What the edge that makes `node` reads, empty for a node nothing here
@@ -989,8 +1007,7 @@ impl GraphSink {
                 let node = if self.unit.root {
                     node
                 } else {
-                    let path = self.graph.path(node);
-                    self.unit.enclosing.get(path).copied().unwrap_or(node)
+                    self.enclosing_node_for(node).unwrap_or(node)
                 };
                 self.interned.insert(symbol, node);
                 Ok(node)

@@ -800,13 +800,19 @@ impl BuildGraph {
     /// time. Real outputs retain the files and timestamps the provisional
     /// build produced; phony outputs settle immediately when the final graph
     /// reaches them.
-    pub(crate) fn mark_subgraphs_prebuilt(&mut self, roots: &[Node], phony: Rule) {
+    ///
+    /// The nodes it settles are handed back, because a caller may need to know
+    /// what has already been MADE and not merely that it will not be made
+    /// again — see [`crate::make::sink::GraphSink::mark_subgraphs_prebuilt`].
+    pub(crate) fn mark_subgraphs_prebuilt(&mut self, roots: &[Node], phony: Rule) -> Vec<Node> {
+        let mut settled = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut work = roots.iter().map(|node| node.0).collect::<Vec<_>>();
         while let Some(node) = work.pop() {
             let Some(edge) = self.arenas.node(node).generator else {
                 continue;
             };
+            settled.push(Node(node));
             if !seen.insert(edge) {
                 continue;
             }
@@ -828,6 +834,7 @@ impl BuildGraph {
             work.extend(validations);
             work.extend(activations);
         }
+        settled
     }
 
     /// Keep the Makefiles this invocation already dealt with out of the goals'

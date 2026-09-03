@@ -998,6 +998,7 @@ assertions (
     {id two-target-names-for-one-path-are-refused-as-two-rules, kind @doing, author "brendan@necessary.nu", at 2026-09-02T12:01:24.74979563Z}
     {id a-loop-around-the-recursion-forks-every-child, kind @complete, author "brendan@necessary.nu", at 2026-09-03T17:18:53.059698559Z}
     {id a-unit-composed-under-two-goals-runs-a-recipe-once-per-copy, kind @doing, author "brendan@necessary.nu", at 2026-09-03T18:01:13.886244357Z}
+    {id a-composed-childs-rule-for-a-target-the-parent-made-is-dropped, kind @doing, author "brendan@necessary.nu", at 2026-09-03T22:25:26.32579495Z}
 )
 
 impl_evidence (
