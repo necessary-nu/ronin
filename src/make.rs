@@ -1170,7 +1170,7 @@ fn compile_unit(
     })
 }
 
-// [spec:ronin:req:make.compiler-input-staging]
+// [spec:ronin:req:make.compiler-input-staging+1]
 fn compose_subninjas(
     unit: UnitOutput,
     compilation_key: &[u8],
@@ -1425,7 +1425,7 @@ struct RecipeSite<'a> {
 ///
 /// `site` is where in the compilation this recipe sits, which phase it belongs
 /// to, and whatever a worker has already read for it.
-// [spec:ronin:req:make.compiler-input-staging]
+// [spec:ronin:req:make.compiler-input-staging+1]
 fn compose_child_groups(
     pending: &sink::PendingSubninja,
     site: RecipeSite<'_>,

@@ -2780,7 +2780,7 @@ fn recursive_recipes_beyond_the_retry_limit_still_compose() {
 /// arrived. Staged one per pass they never meet, and nothing here can pass by
 /// being lucky about timing: the barrier is either met or the case fails on
 /// its own timeout.
-// [spec:ronin:req:make.compiler-input-staging/test]
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn many_independent_recursions_stage_in_one_pass() {
     let directory = test_directory("independent-recursions-one-pass");
@@ -2853,7 +2853,7 @@ fn many_independent_recursions_stage_in_one_pass() {
 /// The `OVERLAP` line is the assertion, exactly as in
 /// [`two_notparallel_sub_makes_never_overlap`], and the two goals reach
 /// different child makefiles so that no cached child is shared between them.
-// [spec:ronin:req:make.compiler-input-staging/test]
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn one_copy_of_a_makefile_stages_per_pass() {
     let directory = test_directory("one-staging-copy-a-pass");
@@ -2912,7 +2912,7 @@ fn one_copy_of_a_makefile_stages_per_pass() {
 /// goals, and that child stops at a boundary of its own on the first pass. The
 /// two counters are the two Makefiles' own `$(shell)`: the child must be read
 /// exactly as many times as the parent, never more.
-// [spec:ronin:req:make.compiler-input-staging/test]
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn a_stopped_child_is_read_once_a_pass() {
     let directory = test_directory("stopped-child-read-once");
@@ -2967,6 +2967,17 @@ fn a_stopped_child_is_read_once_a_pass() {
 /// one thing the case above must not have made buildable: the limit now counts
 /// go-arounds that settled nothing, and this one settles nothing, a hundred
 /// times over.
+///
+/// Nothing here waits for a clock, and that is what made this case a machine
+/// speed test rather than a semantic one. `printf` appends faster than the
+/// kernel advances the clock it stamps mtime from, so several passes in a row
+/// leave one date behind — on this host, on the XFS repository root and on the
+/// tmpfs this scratch directory lives on alike. A read that asks the date alone
+/// therefore settles here after five or six appends and prints `done`, which is
+/// what the release profile did while the debug profile was slow enough to
+/// refuse. The case below asks the same question with the clock taken out of
+/// it.
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn a_read_that_never_settles_is_still_refused() {
     let directory = test_directory("never-settles");
@@ -2983,6 +2994,48 @@ fn a_read_that_never_settles_is_still_refused() {
         String::from_utf8_lossy(&output.stderr).contains("dirty after 100 tries"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A Makefile whose date cannot move at all is still seen to change.
+///
+/// The case above depends on the machine to produce two writes inside one tick;
+/// this one takes the machine out of it. The recipe appends a line and then
+/// stamps the file back to a fixed date, so every pass but the first finds a
+/// Makefile whose mtime is bit-for-bit what it was and whose text is a line
+/// longer. A read that asks the date alone — GNU Make's question, and Ronin's
+/// before this — settles on the second pass and prints `done`, however fast or
+/// slow the host is and whatever its filesystem's timestamp granularity.
+///
+/// So the exit status is the assertion, and the appended lines beside it: the
+/// read must keep going around, on the contents, until the retry ceiling stops
+/// it.
+// [spec:ronin:req:make.compiler-input-staging+1/test]
+#[test]
+fn a_frozen_date_does_not_hide_a_rewrite() {
+    let directory = test_directory("frozen-date-rewrite");
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@echo done\n\
+         Makefile: FORCE\n\
+         \t@printf '# more\\n' >> Makefile; touch -d '2001-01-01 00:00:00' Makefile\n\
+         FORCE:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("dirty after 100 tries"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let makefile = fs::read_to_string(directory.join("Makefile")).unwrap();
+    let appended = makefile.lines().filter(|line| *line == "# more").count();
+    assert_eq!(
+        appended, 100,
+        "the read went around {appended} times, not once per try up to the ceiling"
     );
 }
 
@@ -3271,7 +3324,7 @@ fn two_recipes_for_one_path_are_still_refused() {
 /// pass has already run every action it could. Three records are not enough to
 /// show it — the third is the last, and nothing waits on what it left — so
 /// four is the smallest chain that does.
-// [spec:ronin:req:make.compiler-input-staging/test]
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn a_held_double_colon_record_holds_its_readers() {
     let directory = test_directory("held-double-colon-chain");
@@ -3321,7 +3374,7 @@ fn a_held_double_colon_record_holds_its_readers() {
 /// rule that makes it, because a `.cmd` fragment naming a target the makefile
 /// also names is what put the mention next to the wrapper in the report, and
 /// neither order may change the answer.
-// [spec:ronin:req:make.compiler-input-staging/test]
+// [spec:ronin:req:make.compiler-input-staging+1/test]
 #[test]
 fn a_held_recursive_recipe_holds_its_readers() {
     for (label, mention_first) in [("rule-first", false), ("mention-first", true)] {

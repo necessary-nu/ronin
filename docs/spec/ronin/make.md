@@ -284,12 +284,30 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
-> [spec:ronin:req:make.compiler-input-staging]
+> [spec:ronin:req:make.compiler-input-staging+1]
 > A child Makefile that cannot be read until something exists is a boundary, not
 > a refusal. The composition records what the read needs, leaves the unit
 > incomplete, builds that work provisionally, and reads the same text again —
 > which is why it is not GNU Make's restart and takes no place in
 > `MAKE_RESTARTS`.
+>
+> GNU Make's restart is the other way a read goes around, and a Makefile the read
+> consulted earns one by having MOVED: its date is not what it was, or its
+> contents are not. GNU Make asks the date alone — `main.c` raises `any_remade`
+> on `f->last_mtime != f->mtime_before_update` — and the date comes off a clock
+> the kernel advances a tick at a time, so a Makefile rewritten faster than that
+> reads as unmoved and the read settles on text it has already replaced. Every
+> edge the build then runs was compiled from a Makefile that no longer says what
+> it said, which is a wrong build and not a wrong message. GNU Make 4.4.1 loses
+> this way on a Makefile whose own recipe appends one line to it, so asking the
+> second question is a DELIBERATE divergence from the oracle, recorded in
+> `docs/make-oracle-divergences.md` as one. It is a safe divergence:
+> requiring only that EITHER half moved is a strict superset of GNU Make's
+> question, so a read GNU Make starts over is never settled here, and the reads
+> that go around where GNU Make's did not are the ones whose Makefile really did
+> change. A path that is not a regular file has no contents to compare and is
+> compared by its date alone; nothing may open it to find out, because a named
+> pipe with no writer would never answer.
 >
 > A pass stages EVERY boundary it can reach. A boundary is a prerequisite of the
 > wrapper that reads it, so it sits below that wrapper and no provisional build

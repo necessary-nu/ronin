@@ -15,10 +15,12 @@ released source.
 
 The last section is about a fifth kind of disagreement — Ronin against all four
 builds of GNU Make. It began as a survey for the operator to rule on. On
-2026-08-24 he ruled on **every one of its ten numbered sections** — three of them
-no longer divergences at all, and one whose conditional ruling failed its
-condition and is therefore filed as a defect rather than accepted:
+2026-08-24 he ruled on **every one of that survey's ten numbered sections** —
+three of them no longer divergences at all, and one whose conditional ruling
+failed its condition and is therefore filed as a defect rather than accepted:
 [where Ronin diverges from the oracle](#where-ronin-diverges-from-the-oracle).
+An eleventh arrived later, ruled on its own day, and the section is the standing
+list rather than that one survey's closing state.
 
 ## The oracle
 
@@ -243,7 +245,8 @@ two was GNU's.
 Everything above is one build of GNU Make against another. This section is Ronin
 against all four of them: every place a Ronin `make` build observably differs
 from GNU Make 4.4.1, gathered so the operator can read one document and rule on
-each — which, for all ten, he now has.
+each — which, for all eleven, he now has. Ten of them came from one survey and
+were ruled on one day; §11 was ruled separately, on 2026-09-04.
 
 It began as a survey. The operator's instruction of 2026-08-24, verbatim: *"I do
 not think we have any accepted divergences. You will need to explain all the
@@ -273,8 +276,9 @@ the agent — with no standalone operator ruling behind any of it. That sentence
 retired because it stopped being true, one ruling at a time, and not because the
 standard for it moved.
 
-Every measured cell below was re-measured against `reference/make-oracle/make-4.4.1/make`
-on 2026-08-24.
+Every measured cell in §1 to §10 was re-measured against
+`reference/make-oracle/make-4.4.1/make` on 2026-08-24, and §11's against the same
+binary on 2026-09-04.
 
 ### Summary
 
@@ -290,6 +294,7 @@ on 2026-08-24.
 | 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port`; node `make-recursive-keep-going-choreography-writes-different-files` | **DEFECT** — his ruling was conditional and the condition FAILED (measured) |
 | 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"fine."* |
 | 10 | `-k` builds nothing past an unmakeable prerequisite | **Yes** — `-k` with a prerequisite that has no rule | `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite` (retired) | **operator, 2026-08-24**: *"Ronin superior. Accepted divergence."* |
+| 11 | A remade Makefile is told from an unmoved one by its contents as well as its date | **Yes** — any Makefile a rule rewrites faster than a timestamp tick | `a_read_that_never_settles_is_still_refused` and `a_frozen_date_does_not_hide_a_rewrite` in `tests/make_regressions.rs`; `make.compiler-input-staging+1` | **operator, 2026-09-04**: ruled critical path, *"THIS DIVERGES FROM GNU MAKE, DELIBERATELY, ON EXACTLY THE MAKEFILES WHERE GNU IS UNRELIABLE."* |
 | — | Two defects this survey found | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
 
 **On the numbering.** The operator ruled on the `-k`-past-an-unmakeable-prerequisite
@@ -866,6 +871,90 @@ refusing at graph-load when the goal provably cannot complete beats doing work
 that gets thrown away. So this is the one place in this document where Ronin
 deliberately does *less* than GNU Make and the operator ruled that the less is
 better.
+
+---
+
+### 11. A remade Makefile is told from an unmoved one by its contents as well as its date — **ACCEPTED DIVERGENCE**
+
+**Owner:** `a-makefile-rewritten-within-one-clock-tick-settles-a-read-gnu-would-restart`,
+filed 2026-09-03 and ruled critical path by the operator on 2026-09-04. **Gated
+by** two cases in `tests/make_regressions.rs` —
+`a_read_that_never_settles_is_still_refused`, which is the shape as a real
+machine produces it, and
+`a_frozen_date_does_not_hide_a_rewrite`, which pins
+the same question with the clock taken out of it — and by
+`[spec:ronin:req:make.compiler-input-staging+1]`.
+
+**What GNU does / what Ronin does.** After bringing the Makefiles up to date,
+GNU Make decides whether to start the read over by comparing each one's
+timestamp with the timestamp it had before: `main.c` raises `any_remade` on
+`f->last_mtime != f->mtime_before_update`. That timestamp comes off a clock the
+kernel advances a tick at a time, so a Makefile rewritten faster than a tick
+carries the date it had before and reads as unmoved. Ronin compares the date
+**and** the contents, and starts over if either moved.
+
+**Reproducer / measured**, run on this repository's own XFS root:
+
+```
+all:
+	@echo done
+Makefile: FORCE
+	@printf '# more\n' >> Makefile
+FORCE:
+```
+
+Nothing about this Makefile ever settles: `FORCE` is a target nothing makes and
+which is therefore never up to date, so every pass finds `Makefile` out of date
+against it, appends a line, and leaves the next pass a different file to read.
+
+| | what it does, over five runs each |
+| --- | --- |
+| GNU Make 4.4.1 | appends 3, 3, 16, 4, 3 lines, then runs `all` and exits 0 |
+| GNU Make 4.4.1, with `sleep 0.05` in the remake recipe | never stops; killed at 45 s having appended 800 lines |
+| Ronin before, debug profile | refuses: `manifest 'Makefile' dirty after 100 tries`, exit 2 |
+| Ronin before, release profile | appends 4, 2, 2, 2, 4 lines, then runs `all` and exits 0 |
+| Ronin before, release, `sleep 0.05` in the recipe | refuses, exit 2, 100 lines appended |
+| Ronin after, either profile | refuses, exit 2, 100 lines appended, five runs of five |
+
+The GNU row is the point of this table: the number of appends it gets through is
+not a property of the Makefile, it is a property of when a clock tick lands.
+
+The mechanism, measured directly: three back-to-back appends to one file leave
+**two of the three sharing an identical mtime** on the XFS repository root. The
+clock is the kernel's, not the filesystem's, so this is not an XFS property —
+the same case fails in the release profile with its scratch directory on tmpfs.
+That is the whole of it: the same binary is right or wrong according to how fast
+the host is.
+
+**Why this one is not left to match GNU.** The other divergences in this document
+are about what a build reports, which files it leaves, or what an exit status
+means. This one is about what the build is *compiled from*. A read that settles
+early hands the scheduler a graph derived from text the disk no longer holds, and
+every edge downstream of it is wrong without saying so. GNU Make's answer here is
+not a semantic Ronin is copying; it is a race GNU loses on the same input.
+
+**Why both halves are asked.** The contents alone would be the narrower question,
+and it would be wrong in the other direction: a recipe that moves its Makefile's
+date without changing a byte is one GNU Make *does* start the read over for.
+Requiring only that **either** half moved is a strict superset of GNU Make's
+question, so nothing GNU Make restarts for is settled here, and the reads that go
+around where GNU's did not are exactly the ones whose Makefile really did change.
+A length comparison was considered instead of the contents and refused: it fixes
+the append above and misses `date > stamp.mk`, where a shell redirection truncates
+the same inode and writes the same number of bytes.
+
+**Cost**, measured with an env-gated trace over whole clean builds at `-j8`: zsh
+5.9.2 reads and hashes **27.8 MiB over 728 stamps** across the whole tree
+including its sub-makes, and vim 9.2.0957 **0.77 MiB over 8**. Paired,
+interleaved, rotating wall-clock samples of the zsh clean build put the two arms
+inside this host's noise — see the node's log for the numbers and the load beside
+each.
+
+**Authority: operator decision, Brendan, 2026-09-04**, verbatim: *"THIS DIVERGES
+FROM GNU MAKE, DELIBERATELY, ON EXACTLY THE MAKEFILES WHERE GNU IS UNRELIABLE."*
+Ruled critical path on the same day, with the instruction that matching GNU here
+would mean *"being unreliable in the same way, and the operator's ruling is that
+we do not."*
 
 ---
 

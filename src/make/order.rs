@@ -137,7 +137,7 @@ pub(super) fn dependency_ordered(
 /// puts a producer before anything that reads it, so holding each reader as it
 /// arrives holds everything downstream of a boundary too, however long the
 /// chain.
-// [spec:ronin:req:make.compiler-input-staging]
+// [spec:ronin:req:make.compiler-input-staging+1]
 pub(super) struct Holds {
     /// For each recipe, by its place in the composed order, the places of the
     /// recipes its evaluation inputs are read off.
