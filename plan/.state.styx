@@ -1000,7 +1000,7 @@ assertions (
     {id a-unit-composed-under-two-goals-runs-a-recipe-once-per-copy, kind @doing, author "brendan@necessary.nu", at 2026-09-03T18:01:13.886244357Z}
     {id a-composed-childs-rule-for-a-target-the-parent-made-is-dropped, kind @doing, author "brendan@necessary.nu", at 2026-09-03T22:25:26.32579495Z}
     {id a-makefile-rewritten-within-one-clock-tick-settles-a-read-gnu-would-restart, kind @doing, author "brendan@necessary.nu", at 2026-09-04T11:34:13.799819893Z}
-    {id a-makefiles-own-makeflags-jn-cannot-resize-an-existing-budget, kind @doing, author "brendan@necessary.nu", at 2026-09-04T13:02:59.222653163Z}
+    {id a-makefiles-own-makeflags-jn-cannot-resize-an-existing-budget, kind @complete, author "brendan@necessary.nu", at 2026-09-04T15:04:16.872219848Z}
 )
 
 impl_evidence (
