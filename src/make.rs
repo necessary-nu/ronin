@@ -588,12 +588,17 @@ struct CompilationState<'a> {
     /// flight. See [`Loaded::completed_recipes`].
     completed_recipes: RapidHashSet<RecursiveRecipe>,
     /// The outputs of every recursive wrapper this pass staged and did not
-    /// finish, because the compilation stopped at a boundary before its
-    /// children were composed.
+    /// finish, whether because the compilation stopped at a boundary before
+    /// its children were composed or because the recipe was held for a later
+    /// pass for any other reason.
     ///
     /// Their edges are still wearing the freshness probe, whose command is
     /// `false` and which is never allowed to execute, so nothing this pass
-    /// builds may reach one of them.
+    /// builds may reach one of them. Every hold in `compose_subninjas` that
+    /// happens after `stage_recursive_wrapper` has returned `Dirty` therefore
+    /// owes this list its outputs: [`crate::make::cli::remake::makeable_now`]
+    /// keeps a Makefile back only for outputs it has been told about, and the
+    /// Linux kernel's `syncconfig` reaches a hold that once told it nothing.
     unfinished: Vec<Node>,
     /// The units an earlier pass of this compilation already read, by cache
     /// key, each with what that read was told by the ground. A unit in here is
@@ -1338,6 +1343,7 @@ fn compose_subninjas(
                 for_makefile,
             )
         {
+            state.unfinished.extend(pending.outputs());
             holds.hold(pending_index);
             continue;
         }
@@ -1369,6 +1375,7 @@ fn compose_subninjas(
         // compose. Only [`Holds::stopped_inside`] closes the unit, because only
         // a stop leaves a boundary inside a copy for the next build to reach.
         if !holds.composing() {
+            state.unfinished.extend(pending.outputs());
             holds.hold(pending_index);
             continue;
         }

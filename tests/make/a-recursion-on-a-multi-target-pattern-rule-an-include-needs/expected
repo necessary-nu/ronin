@@ -1,0 +1,29 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 12
+| # The Linux kernel's `syncconfig` reduced: a multi-target PATTERN rule whose
+| # recipe is a RECURSION, making files an INCLUDE needs. The kernel writes it as
+| # `%/config/auto.conf %/config/auto.conf.cmd ...: $(KCONFIG_CONFIG)` carrying
+| # `$(MAKE) -f $(srctree)/Makefile syncconfig`, under its own comment "This
+| # exploits the 'multi-target pattern rule' trick."
+| all: ; @printf '%s\n' '$(GENERATED)' > out
+| 
+| include gen/auto.conf
+| 
+| %/auto.conf %/auto.conf.cmd: base.config
+| 	@printf 'SYNC %s\n' '$@' >> sync.log
+| 	@$(MAKE) -f sync.mk sync
+file base.config kept 1
+| CONFIG_ONE=y
+file gen/auto.conf touched 1
+| GENERATED := from-sync
+file gen/auto.conf.cmd touched 0
+file out touched 1
+| from-sync
+file sync.log touched 1
+| SYNC gen/auto.conf
+file sync.mk kept 4
+| sync:
+| 	@mkdir -p gen
+| 	@printf 'GENERATED := from-sync\n' > gen/auto.conf
+| 	@: > gen/auto.conf.cmd
