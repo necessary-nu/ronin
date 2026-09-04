@@ -219,8 +219,76 @@ fn command_overrides(invocation: &Invocation) -> String {
 /// scheduler, and one it could not compose forks a real Make that has nothing
 /// else to read the budget from.
 // [spec:ronin:req:make.recursive-invocation+3]
-// [spec:ronin:req:make.jobserver+2]
+// [spec:ronin:req:make.jobserver+3]
 pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVariables {
+    let SwitchTable { base, mflags } = switch_table(invocation, invocation.effective_jobs());
+    // The fragments go after every switch and before the assignments, read off
+    // GNU Make's own `MAKEFLAGS` rather than reasoned about. Carrying them is
+    // the only way one reaches a child at all: `$(MAKE)` is one word and holds
+    // nothing, so a child — composed here, or started by a recipe line nothing
+    // could compose — learns what it was invoked under from this variable and
+    // from nowhere else.
+    //
+    // They sit beside the switch table rather than in it, which is where GNU
+    // Make keeps them too: its `MAKEFLAGS` holds a reference to a separate
+    // `-*-eval-flags-*-` variable, and the switch table proper never contains a
+    // fragment. The distinction is load-bearing here for one reason. A switch
+    // is a bit and an assignment is keyed by name, so reading either back twice
+    // settles to the same table; a fragment is neither, and reading one back
+    // appends it again. `decode_makefile_makeflags` reads its three inputs into
+    // one invocation, so a fragment left in the protected table would multiply
+    // every time a Makefile wrote to MAKEFLAGS.
+    let eval_flags = invocation
+        .evals
+        .iter()
+        .map(|eval| format!("--eval={}", quote_for_makeflags(&eval.to_str_lossy())))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let overrides = command_overrides(invocation);
+    let mut makeflags = base.clone();
+    if !eval_flags.is_empty() {
+        makeflags.push(' ');
+        makeflags.push_str(&eval_flags);
+    }
+    if !overrides.is_empty() {
+        // GNU Make ends the switches at a `--` before the assignments, so that
+        // one beginning with a dash cannot be read as another switch.
+        makeflags.push_str(" -- ");
+        makeflags.push_str(&overrides);
+    }
+    CompilerFlagVariables {
+        base,
+        eval_flags,
+        makeflags,
+        mflags,
+        overrides,
+    }
+}
+
+/// One invocation's switch table, in the two spellings Make writes it in.
+pub(super) struct SwitchTable {
+    /// `MAKEFLAGS`' spelling, which leads with the single-letter group and no
+    /// dash in front of it.
+    pub(super) base: String,
+    /// `MFLAGS`' spelling, which is the same switches written as a command
+    /// line.
+    mflags: String,
+}
+
+/// The switch table this invocation publishes, showing `jobs` as its `-j`.
+///
+/// Which `-j` that is has two answers, and the difference is what a makefile's
+/// own write to `MAKEFLAGS` meets. Every other switch in the table outranks
+/// such a write, because GNU Make's decoding sets flags and never clears them:
+/// a `-k` from the environment survives a makefile assigning `MAKEFLAGS`
+/// without it. `-j` is the exception GNU Make writes out longhand — it clears
+/// `arg_job_slots` before reading the makefiles' value back (main.c:2083) and
+/// restores the old number only when the COMMAND LINE set one (`argv_slots`,
+/// main.c:2098) — so the table that outranks a write shows
+/// [`Invocation::jobs`] alone, where the table a child and a Makefile read
+/// shows every `-j` that reached this invocation.
+// [spec:ronin:req:make.jobserver+3]
+pub(super) fn switch_table(invocation: &Invocation, jobs: Option<JobLimit>) -> SwitchTable {
     let letters: String = invocation
         .propagated()
         .iter()
@@ -245,7 +313,7 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
             &format!("-I{}", quote_for_makeflags(&dir.to_string_lossy())),
         );
     }
-    match invocation.effective_jobs() {
+    match jobs {
         Some(JobLimit::Fixed(jobs)) => append(&mut base, &format!("-j{}", jobs.get())),
         Some(JobLimit::Unlimited) => append(&mut base, "-j"),
         Some(JobLimit::Auto) | None => {}
@@ -315,46 +383,7 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     } else {
         format!("-{base}")
     };
-    // The fragments go after every switch and before the assignments, read off
-    // GNU Make's own `MAKEFLAGS` rather than reasoned about. Carrying them is
-    // the only way one reaches a child at all: `$(MAKE)` is one word and holds
-    // nothing, so a child — composed here, or started by a recipe line nothing
-    // could compose — learns what it was invoked under from this variable and
-    // from nowhere else.
-    //
-    // They sit beside the switch table rather than in it, which is where GNU
-    // Make keeps them too: its `MAKEFLAGS` holds a reference to a separate
-    // `-*-eval-flags-*-` variable, and the switch table proper never contains a
-    // fragment. The distinction is load-bearing here for one reason. A switch
-    // is a bit and an assignment is keyed by name, so reading either back twice
-    // settles to the same table; a fragment is neither, and reading one back
-    // appends it again. `decode_makefile_makeflags` reads its three inputs into
-    // one invocation, so a fragment left in the protected table would multiply
-    // every time a Makefile wrote to MAKEFLAGS.
-    let eval_flags = invocation
-        .evals
-        .iter()
-        .map(|eval| format!("--eval={}", quote_for_makeflags(&eval.to_str_lossy())))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let overrides = command_overrides(invocation);
-    let mut makeflags = base.clone();
-    if !eval_flags.is_empty() {
-        append(&mut makeflags, &eval_flags);
-    }
-    if !overrides.is_empty() {
-        // GNU Make ends the switches at a `--` before the assignments, so that
-        // one beginning with a dash cannot be read as another switch.
-        makeflags.push_str(" -- ");
-        makeflags.push_str(&overrides);
-    }
-    CompilerFlagVariables {
-        base,
-        eval_flags,
-        makeflags,
-        mflags,
-        overrides,
-    }
+    SwitchTable { base, mflags }
 }
 
 /// Turn `MAKEFLAGS` into an argv-shaped list.
@@ -607,9 +636,28 @@ pub(super) fn evaluated_invocation(makeflags: &str) -> Result<Invocation, Error>
 /// Apply the switches a Makefile named without disturbing the runtime
 /// facilities (terminal, jobserver transport, working directory) already
 /// selected for this invocation.
+///
+/// `budget` is the widest a unit of the read asked to run at, which is where
+/// the SIZE of the job budget is settled — GNU Make settles it after the read
+/// too, and a makefile that names a `-j` its command line did not gets that
+/// many, GNU walking out of the jobserver it was in to give it to them
+/// (main.c:2101). Ronin has one pool for the tree, so the pool grows instead of
+/// being abandoned: at the address it already published, because the slots are
+/// bytes in the pipe that address names and every recipe already compiled with
+/// it reaches the larger budget unchanged. What keeps this from handing the
+/// whole tree the widest number is the pool each unit is held to; see
+/// [`crate::make::sink::GraphSink::hold_unit_jobs`].
+///
+/// A budget this run JOINED is not widened, and that is deliberate: it belongs
+/// to whoever published it, its slots are being spent by Makes this run cannot
+/// see, and there is one pool per tree. A unit under it may still narrow itself
+/// within it. GNU Make would leave the group and master a second one; the rule
+/// this implements says there is never a second one.
+// [spec:ronin:req:make.jobserver+3]
 pub(super) fn evaluated_build_options(
     initial: &BuildOptions,
     invocation: &Invocation,
+    budget: usize,
 ) -> BuildOptions {
     let mut options = initial.clone();
     options.maxfail = if invocation.given(Switch::KeepGoing) {
@@ -629,6 +677,18 @@ pub(super) fn evaluated_build_options(
         && let Some(jobs) = invocation.effective_jobs()
     {
         options.jobs = jobs;
+    }
+    if budget > super::option_values::job_count(options.jobs)
+        && let Some(jobs) = std::num::NonZeroUsize::new(budget)
+    {
+        options.jobs = if budget == usize::MAX {
+            JobLimit::Unlimited
+        } else {
+            JobLimit::Fixed(jobs)
+        };
+        if let Some(transport) = options.jobserver.as_ref() {
+            transport.widen(jobs);
+        }
     }
     options
 }

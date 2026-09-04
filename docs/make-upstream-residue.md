@@ -358,7 +358,7 @@ The reading above — "there is no jobserver and no handle to publish" — was t
 defect rather than the explanation. `.FEATURES` claimed `jobserver` and
 `jobserver-fifo` the whole time, and a `$(MAKE)` Ronin could not compose forked
 a real Make that ran `-j` of its own beside its parent's.
-`[spec:ronin:req:make.jobserver+2]` makes the claim true: one budget, published
+`[spec:ronin:req:make.jobserver+3]` makes the claim true: one budget, published
 where GNU publishes it, joined and republished the way GNU joins and
 republishes it. The four `jobserver-auth` rows lost their only difference and
 are now `narration` — Ninja's progress line and the recipe echo, nothing else.

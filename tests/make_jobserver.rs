@@ -7,7 +7,7 @@
 //! mixed-tool pairings, a real GNU Make, and none of that belongs beside the
 //! command-line surface.
 //!
-//! [spec:ronin:req:make.jobserver+2]
+//! [spec:ronin:req:make.jobserver+3]
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ mod make_mode;
 use make_mode::{invoked_as, make_command, peak_concurrency, test_directory};
 
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver+2/test]
+// [spec:ronin:req:make.jobserver+3/test]
 // [spec:ronin:req:make.recursive-invocation+3/test]
 #[test]
 fn recursive_make_tree_uses_one_budget() {
@@ -222,7 +222,7 @@ fn write_unlifted_tree(directory: &std::path::Path, units: usize, cut: &str) {
 /// end reaches three by having the address taken away — without it the
 /// measurement would be a tautology about a tree that was never wide enough.
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver+2/test]
+// [spec:ronin:req:make.jobserver+3/test]
 #[test]
 fn an_unlifted_recursion_draws_on_the_shared_budget() {
     const JOBS: usize = 2;
@@ -302,15 +302,25 @@ fn an_unlifted_recursion_draws_on_the_shared_budget() {
     assert_eq!(peak, JOBS, "the budget Ronin joined stopped at Ronin");
 }
 
-/// A child `-j` remains accepted interface data; it cannot create another
-/// scheduler inside the graph the parent already owns.
+/// A `-j` written on a recursive recipe line founds a budget of its own, which
+/// every level below it joins.
+///
+/// GNU Make's `-j%d forced in submake` (main.c:1855): a Make handed a jobserver
+/// address AND a `-j` of its own on its command line leaves the group it was
+/// given and masters a new one, whatever the two numbers are. Measured on the
+/// oracle over this exact tree: `-j2` at the root and `-j4` on the first
+/// recursion runs six units four at a time.
+///
+/// Ronin reaches the same number without a second scheduler. The budget is one
+/// pool that grew to the widest any unit asked for, and the levels that asked
+/// for nothing are held to the run's own by a pool of their own.
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver+2/test]
+// [spec:ronin:req:make.jobserver+3/test]
 #[test]
-fn child_jobs_keep_one_scheduler() {
+fn a_typed_child_jobs_founds_a_new_budget() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];
     const UNITS: usize = 6;
-    /// Different from the root limit, so two schedulers are distinguishable.
+    /// Different from the root limit, so the two budgets are distinguishable.
     const FORCED: usize = 4;
 
     let directory = test_directory("make-forced-budget");
@@ -374,12 +384,108 @@ fn child_jobs_keep_one_scheduler() {
     assert!(output.status.success(), "{said}");
     let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
     assert_eq!(ran, UNITS);
-    // The child spelling did not replace the root graph's one scheduler.
     assert_eq!(
-        peak, 2,
-        "child -j{FORCED} split a root -j2 graph into another scheduler ({peak})"
+        peak, FORCED,
+        "a -j{FORCED} recursion under -j2 ran {peak} at once where GNU Make runs {FORCED}"
     );
+    // The behaviour without the warning: the seven jobserver lines GNU Make
+    // says are narration Ronin does not repeat.
     assert!(!said.contains("resetting jobserver mode"), "{said}");
+
+    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+}
+
+/// A makefile's own `MAKEFLAGS += -jN` resizes the budget its unit runs at,
+/// whichever way it moves it.
+///
+/// GNU Make's `-j%d forced in makefile` (main.c:2107). Both directions are
+/// here because they fail differently: a budget that will not GROW costs wall
+/// time — a sub-makefile asking for four runs at the parent's two — and one
+/// that will not NARROW is a correctness defect, because a makefile asking to
+/// be run one recipe at a time is asking for something it needs.
+///
+/// Measured rather than timed. Each recipe writes when it starts and when it
+/// stops, and what is asserted is how many overlapped; a loaded host moves the
+/// wall clock and cannot move that.
+#[cfg(all(unix, feature = "make"))]
+// [spec:ronin:req:make.jobserver+3/test]
+#[test]
+fn a_makefiles_own_jobs_resize_the_budget() {
+    const UNITS: usize = 4;
+
+    let directory = test_directory("make-makefile-budget");
+    let served = directory.join("jobservers");
+    fs::create_dir_all(&served).unwrap();
+    let log = directory.join("units");
+    let stamp = directory.join("unit.sh");
+    fs::write(
+        &stamp,
+        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // The work is in the sub-makefile and the recursion carries no `-j` of its
+    // own, so the only thing that can move the number is the line the child's
+    // own makefile wrote.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@$(MAKE) --no-print-directory -f sub.mk all\n.PHONY: all\n",
+    )
+    .unwrap();
+    let units = (0..UNITS)
+        .map(|unit| format!("u{unit}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let program = invoked_as(&directory, "make");
+    let measure = |root: usize, forced: usize| {
+        fs::write(
+            directory.join("sub.mk"),
+            format!(
+                "MAKEFLAGS += -j{forced}\nall: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
+                stamp.display()
+            ),
+        )
+        .unwrap();
+        let _ = fs::remove_file(&log);
+        let output = make_command(&program, &directory)
+            .arg(format!("-j{root}"))
+            .env("LOG", &log)
+            .env("TMPDIR", &served)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{said}");
+        assert!(!said.contains("forced in makefile"), "{said}");
+        let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+        assert_eq!(ran, UNITS);
+        peak
+    };
+
+    // Wider than the budget that already exists: the pool the run published
+    // grows to four at the address every recipe already carries, rather than a
+    // second pool being stood up at a second address nothing was compiled with.
+    assert_eq!(
+        measure(2, 4),
+        4,
+        "a sub-makefile's -j4 ran at the parent's 2"
+    );
+    // Narrower than it, which the same defect got wrong in the direction that
+    // breaks builds rather than slowing them.
+    assert_eq!(
+        measure(4, 1),
+        1,
+        "a sub-makefile's -j1 ran 4 recipes at once"
+    );
+    assert_eq!(
+        measure(4, 2),
+        2,
+        "a sub-makefile's -j2 ran 4 recipes at once"
+    );
+    // And a run nothing asked to resize is the run it was invoked as.
+    assert_eq!(measure(4, 4), 4);
 
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
 }

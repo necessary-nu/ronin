@@ -1001,6 +1001,19 @@ impl BuildGraph {
         Some(Node(output))
     }
 
+    /// Puts every edge that runs a command and named no pool into `pool`.
+    ///
+    /// A phony edge is left alone: it starts no process, so a slot it held
+    /// would be capacity taken from work that does.
+    pub fn hold_unpooled_edges(&mut self, pool: Pool) {
+        for edge in self.arenas.edge_ids() {
+            let stored = self.arenas.edge(edge);
+            if stored.pool.is_none() && !self.arenas.is_phony_rule(stored.rule) {
+                self.arenas.edge_mut(edge).pool = Some(pool.0);
+            }
+        }
+    }
+
     /// Records `node` as a target to build when none are named.
     pub fn add_default(&mut self, node: Node) {
         self.defaults.push(node.0);

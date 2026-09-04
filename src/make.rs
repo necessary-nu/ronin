@@ -233,6 +233,9 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             assumed_old: Vec::new(),
             level,
             jobs: session.flags.num_jobs.max(1),
+            // No group above this entry to join: what its makefiles decide is
+            // the run's own budget.
+            job_group: None,
             // This entry compiles for a caller that runs the graph itself, and
             // the session's job count is the whole of what it was told.
             parallel_reads: session.flags.num_jobs.max(1),
@@ -355,6 +358,14 @@ pub(crate) struct CompilationContext {
     pub(crate) assumed_old: Vec<crate::util::BString>,
     pub(crate) level: usize,
     pub(crate) jobs: usize,
+    /// The job group this unit reads under: the pool holding the group's edges
+    /// and the budget it stands at. `None` is the run's own budget, which the
+    /// scheduler bounds directly.
+    ///
+    /// Inherited, because GNU Make's is: a Make that founded no group of its
+    /// own passes down the jobserver it joined, and a Make below it draws on
+    /// the same tokens.
+    pub(crate) job_group: Option<(Vec<u8>, std::num::NonZeroUsize)>,
     /// How many of this compilation's Makefile reads may overlap.
     ///
     /// Separate from `jobs` because `jobs` is what `MAKEFLAGS` carries, and it
@@ -553,6 +564,9 @@ struct CompilationState<'a> {
     refusals: Vec<RefusedMakefile>,
     settled_boundaries: &'a RapidHashSet<EvaluationBoundary>,
     evaluation_boundaries: RapidHashSet<EvaluationBoundary>,
+    /// The widest job budget any unit of this compilation asked for, which is
+    /// the run's own until a unit's makefiles ask for more.
+    job_budget: usize,
     /// The recursive recipes an earlier pass carried to their end.
     ///
     /// A recipe cut into segments is mid-flight from the moment its first
@@ -852,6 +866,7 @@ fn load_with_subninjas_unlocked(
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError> {
     let mut sink = GraphSink::new_at(&root.context.root_directory, expansion);
+    let run_budget = root.context.jobs;
     let mut state = CompilationState {
         cache: RapidHashMap::default(),
         compiling: RapidHashSet::default(),
@@ -867,6 +882,7 @@ fn load_with_subninjas_unlocked(
         settled_boundaries: &settled.boundaries,
         refusals: Vec::new(),
         evaluation_boundaries: RapidHashSet::default(),
+        job_budget: root.context.jobs,
         finished_recipes: &settled.recipes,
         completed_recipes: RapidHashSet::default(),
         unfinished: Vec::new(),
@@ -894,7 +910,12 @@ fn load_with_subninjas_unlocked(
         &mut state,
     )?;
     let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
-    let graph = sink.into_graph().map_err(MakeError::Construct)?;
+    // Only a run some unit widened: everywhere else the run's budget IS the
+    // scheduler's, and a pool repeating it would hold nothing back.
+    let ungrouped = (state.job_budget > run_budget)
+        .then(|| std::num::NonZeroUsize::new(run_budget))
+        .flatten();
+    let graph = sink.into_graph(ungrouped).map_err(MakeError::Construct)?;
     Ok(Loaded {
         graph,
         pending_recipes,
@@ -910,6 +931,7 @@ fn load_with_subninjas_unlocked(
         unfinished: state.unfinished,
         units_read: state.units_read,
         makeflags: root.makeflags,
+        job_budget: state.job_budget,
     })
 }
 
@@ -976,7 +998,27 @@ fn read_unit(
             std::sync::Arc::clone(enclosing),
         );
     }
-    sink.serialise_unit(ev.session.flags.not_parallel);
+    // How many of this unit's recipes may run at once, as its own settled
+    // `MAKEFLAGS` names it. Every source of a `-j` has landed in that one
+    // string by now — the command line that started the unit, the budget it
+    // inherited, what its own makefiles wrote — with the precedence GNU Make
+    // gives them already applied, because a `-j` a command line typed is
+    // protected from a makefile's write and one merely inherited is not. See
+    // [`crate::make::cli::interface::switch_table`]. A `MAKEFLAGS` naming no
+    // `-j` at all leaves the group's own budget standing.
+    // [spec:ronin:req:make.jobserver+3]
+    let group_budget = context
+        .job_group
+        .as_ref()
+        .map_or(context.jobs, |(_, budget)| budget.get());
+    let budget = cli::makeflags_job_budget(&makeflags).unwrap_or(group_budget);
+    let job_group = sink.hold_unit_jobs(
+        ev.session.flags.not_parallel,
+        context.job_group.clone(),
+        (budget != group_budget)
+            .then(|| std::num::NonZeroUsize::new(budget))
+            .flatten(),
+    );
     let mut recipe_environment = context.recipe_environment.clone();
     apply_recipe_environment(&mut recipe_environment, &flag_environment);
     apply_recipe_environment(&mut recipe_environment, &exported);
@@ -1027,6 +1069,8 @@ fn read_unit(
         pending_recipes,
         settled_edges,
         journal,
+        job_group,
+        job_budget: budget,
     })
 }
 
@@ -1045,6 +1089,10 @@ struct UnitRead {
     /// What this read was told from outside itself, for the read that repeats
     /// it.
     journal: UnitJournal,
+    /// The job group this unit ended up in, which its children join.
+    job_group: Option<(Vec<u8>, std::num::NonZeroUsize)>,
+    /// How many of this unit's own recipes may run at once.
+    job_budget: usize,
 }
 
 fn compile_unit(
@@ -1116,6 +1164,8 @@ fn compile_unit(
         pending_recipes,
         settled_edges,
         journal,
+        job_group,
+        job_budget,
     } = match read {
         Ok(read) => read,
         Err(error) => {
@@ -1123,6 +1173,10 @@ fn compile_unit(
             return Err(error);
         }
     };
+    // The widest budget any unit asked for is what the one scheduler has to be
+    // opened to, because a unit held to its own pool can still only run as many
+    // commands at once as the scheduler will start.
+    state.job_budget = state.job_budget.max(job_budget);
     state.units_read.insert(compilation_key.clone(), journal);
     state.retain(pending_recipes, &context.directory);
     state.pending_recipes.admit_settled(settled_edges);
@@ -1135,6 +1189,7 @@ fn compile_unit(
     descendant_context.enclosing =
         enclosing::for_children(enclosing, std::mem::take(&mut unit.generated));
     descendant_context.makeflags.clone_from(&makeflags);
+    descendant_context.job_group = job_group;
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
     apply_recipe_environment(
@@ -1935,6 +1990,8 @@ pub struct Loaded {
     units_read: ReadJournals,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
     makeflags: String,
+    /// The widest budget any unit of this read asked to run at.
+    job_budget: usize,
     /// The recipes this graph's own executor will expand as it launches them,
     /// with the session they belong to.
     pending_recipes: Option<recipe::PendingRecipes>,
@@ -2090,10 +2147,17 @@ impl Loaded {
         std::mem::take(&mut self.units_read)
     }
 
-    /// The switch state the Makefile left for its own build and its children.
+    /// The two things the read settled about the invocation itself: the switch
+    /// state the Makefile left for its own build and its children, and how many
+    /// recipes the graph must be allowed to run at once.
+    ///
+    /// The budget is the run's own `-j` unless a unit's makefiles asked for
+    /// more, in which case it is the widest of them: every unit not in that
+    /// unit's group is held to its own budget by a pool, and a scheduler kept
+    /// at the narrower number would hold the widened one back with it.
     #[must_use]
-    pub(crate) fn makeflags(&self) -> &str {
-        &self.makeflags
+    pub(crate) fn settled_invocation(&self) -> (&str, usize) {
+        (&self.makeflags, self.job_budget)
     }
 }
 

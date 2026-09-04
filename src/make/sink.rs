@@ -256,6 +256,10 @@ struct Unit {
     command_directory: PathBuf,
     root: bool,
     serial_pool: Option<Vec<u8>>,
+    /// The pool holding this unit's command edges to the job budget its own
+    /// group stands at, and that budget. Absent for a unit reading under the
+    /// budget the run itself was given, which nothing narrows.
+    job_pool: Option<(Vec<u8>, NonZeroUsize)>,
     recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     /// Why no recipe of this unit can be started — see
     /// [`CommandLayout::unreadable`].
@@ -348,6 +352,7 @@ pub struct GraphSink {
     completion_proxies: usize,
     recipe_stages: usize,
     serial_units: usize,
+    job_groups: usize,
     /// The first construction failure, kept because kati's walk unwinds through
     /// [`anyhow::Error`] and the typed error is what a caller can act on.
     failure: Option<FrontendError>,
@@ -412,6 +417,7 @@ impl GraphSink {
                 command_directory: PathBuf::new(),
                 root: true,
                 serial_pool: None,
+                job_pool: None,
                 recipe_environment: Vec::new(),
                 unreadable: None,
                 targets: Vec::new(),
@@ -439,6 +445,7 @@ impl GraphSink {
             completion_proxies: 0,
             recipe_stages: 0,
             serial_units: 0,
+            job_groups: 0,
             failure: None,
             expansion,
         }
@@ -485,6 +492,7 @@ impl GraphSink {
             command_directory,
             root: false,
             serial_pool: None,
+            job_pool: None,
             recipe_environment: Vec::new(),
             unreadable: None,
             targets: Vec::new(),
@@ -570,19 +578,52 @@ impl GraphSink {
         }
     }
 
-    /// Constrain only this compilation unit's command edges to depth one.
-    /// A semantic child gets its own unit, so a parent's `.NOTPARALLEL` never
-    /// turns into a global executor switch that serialises the child graph.
+    /// Put this unit in the pool that holds its recipes, and answer with the
+    /// job group it ended up in.
     ///
-    /// This is half of the domain. The unit's recursive recipes are the other
-    /// half, and a pool cannot hold them — see [`Self::chain_serial_jobs`].
+    /// `serial` is `.NOTPARALLEL`, which constrains only this unit's command
+    /// edges, so a parent's declaration never becomes a global executor switch
+    /// that serialises the child graph. It is half of that domain — the unit's
+    /// recursive recipes are the other half, and a pool cannot hold them; see
+    /// [`Self::chain_serial_jobs`]. Two pools can claim a unit and an edge
+    /// names one, so it wins over the group below: one recipe at a time is
+    /// narrower than any budget.
+    ///
+    /// GNU Make's groups are jobserver groups: a Make whose own makefiles set
+    /// a `-j` the command line did not becomes the master of a new one
+    /// (main.c:2101), and every Make below it joins that one rather than the
+    /// one above. Ronin has one scheduler and one token pool for the whole
+    /// tree, so a group is a pool over the units that belong to it instead: the
+    /// unit that founded it and every unit composed under it that asked for no
+    /// budget of its own.
+    ///
+    /// `own` is the budget this unit's makefiles named where that is not the
+    /// budget of `group`, and founding a group is the whole of what it does.
+    /// The run's own budget founds no group here — a unit reading under it is
+    /// bounded by the scheduler, and only a run some unit widened needs the
+    /// rest of it held back. See [`Self::into_graph`].
     // [spec:ronin:req:make.notparallel-domain]
-    pub(crate) fn serialise_unit(&mut self, serial: bool) {
+    // [spec:ronin:req:make.jobserver+3]
+    pub(crate) fn hold_unit_jobs(
+        &mut self,
+        serial: bool,
+        group: Option<(Vec<u8>, NonZeroUsize)>,
+        own: Option<NonZeroUsize>,
+    ) -> Option<(Vec<u8>, NonZeroUsize)> {
         if serial {
             let name = format!("make_serial_{}", self.serial_units).into_bytes();
             self.serial_units += 1;
             self.unit.serial_pool = Some(name);
         }
+        self.unit.job_pool = match own {
+            Some(budget) => {
+                let name = format!("make_jobs_{}", self.job_groups).into_bytes();
+                self.job_groups += 1;
+                Some((name, budget))
+            }
+            None => group,
+        };
+        self.unit.job_pool.clone()
     }
 
     /// Give this compilation unit the environment changes that differ from
@@ -924,11 +965,30 @@ impl GraphSink {
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.
     ///
+    /// `ungrouped` is the budget every edge no job group claimed is held to,
+    /// which is wanted only where a unit founded a group wider than the run's:
+    /// that is the one case where the scheduler runs above what the command
+    /// line asked for, and GNU Make keeps the run's own group at its own size
+    /// across exactly that — the jobserver a forced `-j` walks away from goes
+    /// on bounding every Make still in it. Held here rather than as the edges
+    /// are emitted, because which unit asked for the most is not known until
+    /// the last of them has been read.
+    ///
     /// # Errors
     ///
     /// Returns [`FrontendError`] for the failure that stopped construction:
     /// two rules generating one output, an edge naming a pool nobody declared.
-    pub fn into_graph(self) -> Result<BuildGraph, FrontendError> {
+    // [spec:ronin:req:make.jobserver+3]
+    pub fn into_graph(
+        mut self,
+        ungrouped: Option<NonZeroUsize>,
+    ) -> Result<BuildGraph, FrontendError> {
+        if let Some(depth) = ungrouped
+            && let Ok(pool) = self.graph.define_pool(b"make_jobs_run")
+        {
+            self.graph.set_pool_depth(pool, depth);
+            self.graph.hold_unpooled_edges(pool);
+        }
         match self.failure {
             Some(failure) => Err(failure),
             None => Ok(self.graph),
@@ -1351,10 +1411,16 @@ impl GraphSink {
         let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
         let is_subninja = subninja_rule.is_some();
         let has_residual_action = subninja_rule.is_some_and(|rule| rule.residual_rule.is_some());
+        // The serialising pool first where a unit has both: it is the narrower
+        // of the two, and an edge names one pool.
         if edge.pool.is_none()
             && edge.rule.is_some()
             && (!is_subninja || has_residual_action)
-            && let Some(pool) = &self.unit.serial_pool
+            && let Some(pool) = self
+                .unit
+                .serial_pool
+                .as_ref()
+                .or_else(|| self.unit.job_pool.as_ref().map(|(name, _)| name))
         {
             bindings.push((self.bindings.pool, pool.clone()));
         }
@@ -1527,6 +1593,17 @@ impl BuildSink for GraphSink {
                 .define_pool(&name)
                 .map_err(|failure| self.refuse(failure))?;
             self.graph.set_pool_depth(declared, NonZeroUsize::MIN);
+        }
+        // A group outlives the unit that founded it, so the second unit to
+        // join one finds it declared already and says nothing further about it.
+        if let Some((name, budget)) = self.unit.job_pool.clone()
+            && self.declared_pools.insert(name.clone())
+        {
+            let declared = self
+                .graph
+                .define_pool(&name)
+                .map_err(|failure| self.refuse(failure))?;
+            self.graph.set_pool_depth(declared, budget);
         }
         Ok(())
     }

@@ -235,11 +235,27 @@ impl Transport {
     }
 
     /// The environment a child needs to draw on this build's job budget.
-    fn publication(&self) -> &[(&'static str, OsString)] {
+    fn publication(&self) -> Vec<(&'static str, OsString)> {
         match self {
-            Self::Inherited(_, publication) => publication,
+            Self::Inherited(_, publication) => publication.clone(),
             #[cfg(unix)]
-            Self::Served(served) => &served.environment,
+            Self::Served(served) => served.publication().to_vec(),
+        }
+    }
+
+    /// Widen a budget this run created to `jobs`, and say whether it was.
+    ///
+    /// Only a budget this run owns is this run's to size: writing tokens into
+    /// one a parent published would hand this tree capacity nobody granted it.
+    /// The address never moves, because the slots are bytes in the pipe that
+    /// address already names — so a recipe compiled with it before the widening
+    /// reaches the same, larger, budget.
+    // [spec:ronin:req:make.jobserver+3]
+    pub(crate) fn widen(&self, jobs: NonZeroUsize) -> bool {
+        match self {
+            Self::Inherited(..) => false,
+            #[cfg(unix)]
+            Self::Served(served) => served.widen(jobs),
         }
     }
 
@@ -255,8 +271,8 @@ impl Transport {
                 .iter_mut()
                 .find(|(existing, _)| existing == std::ffi::OsStr::new(name))
             {
-                Some((_, Some(value))) => splice(value, published),
-                _ if owned => environment.push(((*name).into(), Some(published.clone()))),
+                Some((_, Some(value))) => splice(value, &published),
+                _ if owned => environment.push((name.into(), Some(published))),
                 _ => {}
             }
         }
@@ -302,7 +318,10 @@ pub(crate) struct ServedJobserver {
     /// non-blocking so an empty one is a decision rather than a stall. Both
     /// belong to this description alone; a child opening the path gets its own.
     fifo: std::fs::File,
-    environment: [(&'static str, OsString); 3],
+    /// How many slots this budget stands at, which a makefile's own `-jN` can
+    /// raise after the address has been published. Held as a number rather
+    /// than as the finished publication so that the two can never disagree.
+    jobs: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(unix)]
@@ -341,14 +360,37 @@ impl ServedJobserver {
         // scheduler takes that one. Sharing all `jobs` would hand out a budget
         // Ronin is simultaneously spending.
         let served = Self {
-            environment: publication_for(jobs, &path),
             path,
             fifo,
+            jobs: std::sync::atomic::AtomicUsize::new(jobs.get()),
         };
         served
             .fill(jobs.get() - 1)
             .map_err(|source| operate(JobserverOperation::CreateJobserver, source))?;
         Ok(served)
+    }
+
+    /// The environment a child is given to reach this budget as it now stands.
+    fn publication(&self) -> [(&'static str, OsString); 3] {
+        let jobs = NonZeroUsize::new(self.jobs.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(NonZeroUsize::MIN);
+        publication_for(jobs, &self.path)
+    }
+
+    /// Write the slots a wider budget has that this one did not.
+    ///
+    /// Idempotent against a narrower or equal request, so a pass that asks
+    /// again for a budget already standing at `jobs` writes nothing: the tokens
+    /// are the budget, and a second helping of them would be a second budget.
+    fn widen(&self, jobs: NonZeroUsize) -> bool {
+        use std::sync::atomic::Ordering;
+
+        let held = self.jobs.fetch_max(jobs.get(), Ordering::Relaxed);
+        if held >= jobs.get() {
+            return false;
+        }
+        let _ = self.fill(jobs.get() - held);
+        true
     }
 
     /// Writes the shareable slots, stopping at whatever the fifo will hold.
@@ -827,7 +869,7 @@ mod tests {
         // group into MFLAGS, and nothing into CARGO_MAKEFLAGS.
         let published = |name: &str| {
             served
-                .environment
+                .publication()
                 .iter()
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| value.to_str().unwrap().to_owned())
@@ -892,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:ronin:req:make.jobserver+2/test]
+    // [spec:ronin:req:make.jobserver+3/test]
     // [spec:ronin:req:make.recursive-invocation+3/test]
     fn an_inherited_jobserver_survives_a_rewritten_makeflags() {
         let inherit =

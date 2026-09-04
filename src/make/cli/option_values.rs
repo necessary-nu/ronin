@@ -154,7 +154,7 @@ pub(super) struct JobCounts {
 impl JobCounts {
     pub(super) const fn of(options: &BuildOptions) -> Self {
         Self {
-            carried: job_count(options),
+            carried: job_count(options.jobs),
             parallel_reads: read_job_count(options),
         }
     }
@@ -177,9 +177,29 @@ const fn read_job_count(options: &BuildOptions) -> usize {
     }
 }
 
-const fn job_count(options: &BuildOptions) -> usize {
-    match options.jobs {
+/// The budget a `-j` stands for, as a count of recipes at once.
+///
+/// A `-j` with no number is every recipe at once, and so is no `-j` at all, for
+/// the reason [`read_job_count`] gives: the switch table makes no distinction
+/// between them, and the largest count there is says "no ceiling".
+pub(super) const fn job_count(jobs: JobLimit) -> usize {
+    match jobs {
         JobLimit::Fixed(jobs) => jobs.get(),
         JobLimit::Auto | JobLimit::Unlimited => usize::MAX,
     }
+}
+
+/// The budget a settled `MAKEFLAGS` names, for the unit that settled it.
+///
+/// A value the argument reader will not take is not a budget; the read that
+/// owns that `MAKEFLAGS` refuses over it in its own right — see
+/// [`super::interface::evaluated_invocation`], which is where the complaint
+/// belongs — and a unit asking about its job count is not the place to raise it
+/// a second time.
+// [spec:ronin:req:make.jobserver+3]
+pub(in crate::make) fn makeflags_job_budget(makeflags: &str) -> Option<usize> {
+    super::interface::evaluated_invocation(makeflags)
+        .ok()?
+        .effective_jobs()
+        .map(job_count)
 }

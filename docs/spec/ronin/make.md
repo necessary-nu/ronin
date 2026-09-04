@@ -433,7 +433,7 @@ manifest-derived graph is.
 > makes its own parent's target — ends the lint where it would have ended the
 > build, and is reported as the refusal it is.
 
-> [spec:ronin:req:make.jobserver+2]
+> [spec:ronin:req:make.jobserver+3]
 > `-j` bounds the whole Make tree and not just this process. GNU Make gives one
 > jobserver per tree: the top invocation creates it, every Make below joins it
 > through `--jobserver-auth` in `MAKEFLAGS`, and the tokens in it are what stop
@@ -469,13 +469,42 @@ manifest-derived graph is.
 > served, because a path reaches a grandchild through an intermediate process
 > that passes no descriptors down.
 >
-> The address is settled before the makefiles are read, where GNU Make settles
-> it after. Ronin compiles recipes rather than interpreting them, so each
-> unit's `MAKEFLAGS` is fixed while the unit is read. Two consequences are
-> accepted: a `$(MAKEFLAGS)` expanded during the read carries the address
-> where GNU Make's does not yet, and a makefile's own `MAKEFLAGS += -jN`
-> cannot resize a budget that already exists. What a recipe finally reads is
-> the value GNU Make would have given it.
+> The ADDRESS is settled before the makefiles are read, where GNU Make settles
+> it after, because Ronin compiles recipes rather than interpreting them and a
+> recipe carries the address it was compiled with. The SIZE is settled after
+> the read, which is where GNU Make settles it too.
+>
+> Each unit's own `MAKEFLAGS`, as its read leaves it, names how many of that
+> unit's recipes may run at once. Every source of a `-j` has landed in that one
+> string by then — what the unit's command line typed, what it inherited, what
+> its own makefiles wrote — with GNU Make's precedence between them already
+> applied: a `-j` a command line typed cannot be taken back by a makefile
+> (`argv_slots`, main.c), and a `-j` merely inherited protects nothing, so a
+> makefile's own is what the unit ends up at. A unit whose budget is not the
+> budget of the group it was read under founds a group of its own, and every
+> unit composed below it joins that group rather than the one above. GNU Make's
+> groups are jobserver groups and Ronin's are pools over the recipes of their
+> units, which is the same partition without a second scheduler; a unit
+> `.NOTPARALLEL` already holds to one recipe at a time keeps that, being
+> narrower than any group.
+>
+> The run is opened to the widest group any unit founded, because one scheduler
+> cannot start more than its own limit however wide a pool is; the units that
+> founded no group are then held to the run's own budget in turn, so widening
+> for one unit does not widen the rest. A budget this run CREATED grows to that
+> width at the address it already published — the slots are bytes in the pipe
+> that address names, so a recipe compiled before the widening reaches the
+> larger budget unchanged, and no second address is invented for recipes that
+> could not carry it. A budget this run JOINED is not resized: it is not this
+> run's to size and its slots are being spent by Makes this run cannot see. A
+> unit under such a budget still narrows itself within it. GNU Make leaves the
+> group and masters a second one instead; that is the one place the two answers
+> differ, and it differs by Ronin running fewer recipes at once rather than
+> more, which is what one pool per tree costs.
+>
+> One consequence of settling the address early is accepted: a `$(MAKEFLAGS)`
+> expanded during the read carries the address where GNU Make's does not yet.
+> What a recipe finally reads is the value GNU Make would have given it.
 
 ## Verification
 

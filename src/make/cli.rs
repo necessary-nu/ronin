@@ -48,11 +48,12 @@ mod switch_table;
 use diagnostics::{emit_raised, led_by_raised};
 use interface::{
     ArgumentSource, carry_command_line_evals, compiler_flag_variables, decode_makefile_makeflags,
-    evaluated_build_options, evaluated_invocation, makeflags_arguments, read_shuffle,
+    evaluated_build_options, evaluated_invocation, makeflags_arguments, read_shuffle, switch_table,
 };
 use jobserver_style::{
     carried_switches, read_jobserver_auth, read_jobserver_style, unknown_jobserver_style,
 };
+pub(in crate::make) use option_values::makeflags_job_budget;
 use option_values::{JobCounts, jobs_value, load_value, value};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs, sweeps_nothing};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
@@ -1394,6 +1395,12 @@ fn session_for(
     session.census = Arc::clone(census);
     let compiler_flags = compiler_flag_variables(invocation);
     let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
+    // The same table, as a makefile's own write to `MAKEFLAGS` meets it: see
+    // [`interface::switch_table`], which is where the one switch that differs
+    // is written down.
+    let protected = Bytes::from(
+        carried_switches(&switch_table(invocation, invocation.jobs).base, invocation).into_bytes(),
+    );
     // The switch table alone. What `MAKEFLAGS` reads back is this plus the two
     // references it names, which the evaluator assembles: GNU Make's
     // `define_makeflags` writes the fragments and the assignments as
@@ -1442,7 +1449,7 @@ fn session_for(
         make_overrides: Some(make_overrides.clone()),
         makeflags_assignment: Some(kati::flags::MakeflagsAssignment {
             decoder: decode_makefile_makeflags,
-            protected: carried.clone(),
+            protected,
             effective: carried,
             has_overrides: !make_overrides.is_empty(),
             published: makeflags,
@@ -1592,7 +1599,7 @@ fn settle_jobserver(invocation: &mut Invocation, options: &mut BuildOptions) {
 
 /// The scheduler settings this invocation maps onto Ninja's controls.
 // [spec:ronin:req:make.narration+2]
-// [spec:ronin:req:make.jobserver+2]
+// [spec:ronin:req:make.jobserver+3]
 fn build_options(
     invocation: &mut Invocation,
     runner: &Runner,
@@ -1895,8 +1902,10 @@ fn prepare_graph(
         // after this one and not this one.
         settled.recipes.extend(loaded.take_recipes_carried_whole());
         emit_raised(root.diagnostics, diagnostics, held)?;
-        let effective_invocation = evaluated_invocation(loaded.makeflags())?;
-        let effective_options = evaluated_build_options(root.options, &effective_invocation);
+        let (makeflags, budget) = loaded.settled_invocation();
+        let effective_invocation = evaluated_invocation(makeflags)?;
+        let effective_options =
+            evaluated_build_options(root.options, &effective_invocation, budget);
         if loaded.regeneration_targets().is_empty() {
             return Ok(crate::make::cli::remake::read_with_nothing_to_remake(
                 loaded,
@@ -2358,6 +2367,7 @@ fn compilation_context(
         assumed_old: invocation.assumed_old.clone(),
         level,
         jobs: jobs.carried,
+        job_group: None,
         parallel_reads: jobs.parallel_reads,
         // Everything this unit was evaluated with except how many times it has
         // been read. GNU Make marks `MAKE_RESTARTS` no-export precisely so a
@@ -3006,7 +3016,7 @@ mod tests {
     /// process wherever a recursion could not be composed. So the limit is a
     /// limit on the one Ninja scheduler AND the budget a real child draws on,
     /// which is one pool with one address — never a second scheduler.
-    // [spec:ronin:req:make.jobserver+2/test]
+    // [spec:ronin:req:make.jobserver+3/test]
     #[test]
     fn make_jobs_use_one_ninja_scheduler() {
         let directory = std::env::temp_dir();

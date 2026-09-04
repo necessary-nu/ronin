@@ -220,7 +220,7 @@ direction that involved a real child process.
 
 What the boundary actually forbids is a second *scheduler*, and one budget
 spent through one client by one Ninja scheduler is the opposite of that: see
-`[spec:ronin:req:make.jobserver+2]`. Recursions Ronin composes still cost no
+`[spec:ronin:req:make.jobserver+3]`. Recursions Ronin composes still cost no
 token beyond the slot their edge already holds. Reclassified `I`.
 
 ### Refactor chain

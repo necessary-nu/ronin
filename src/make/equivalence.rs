@@ -776,7 +776,7 @@ fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
         return Err(Outcome::NotAccepted(format!("{error:#}")));
     }
     let pending_subninjas = sink.take_unit().subninjas.len();
-    let direct = sink.into_graph();
+    let direct = sink.into_graph(None);
     let parsed = load_manifest(directory, "build.ninja", ManifestOptions::default());
     match (direct, parsed) {
         (Ok(direct), Ok(parsed)) => Ok(Both {
