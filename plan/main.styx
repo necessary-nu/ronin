@@ -21611,4 +21611,18 @@ children (
             }
         )
     }
+
+    {
+        id a-kernel-directory-recursion-leaves-built-in-a-unmade
+        title "Compose the per-directory recursion Kbuild builds built-in.a from"
+        kind @fix
+        log (
+            {
+                at 2026-09-04T17:41:16.663836491Z
+                author "brendan@necessary.nu"
+                kind @blocker
+                text "THE SECOND KERNEL DEFECT, uncovered once 2dfa6b3 unblocked the first. Ronin still cannot build the Linux kernel, but it now fails much later and for a different reason.\n\nWHERE IT GETS TO NOW. linux-6.12.48 at allnoconfig, `-j8`: stdout goes from 4 lines to 52. It clears the config stage, builds scripts/mod (HOSTCC file2alias.o, HOSTLD modpost), runs CHKSHA1 over the atomic headers, compiles kernel/bounds.s and arch/x86/kernel/asm-offsets.s, and runs CALL scripts/checksyscalls.sh. GNU Make 4.4.1 produces 1171 lines on the same tree.\n\nWHERE IT STOPS.\n\n  [1/3]   CC      kernel/bounds.s\n  [2/3]\n  [3/3]   AR      vmlinux.a\n  FAILED: [code=1] vmlinux.a\n  ...ar cDPrST vmlinux.a ./built-in.a...\n  ar: ./built-in.a: No such file or directory\n\nTHREE EDGES IN THAT PASS, where the tree's objects should have been compiled. `built-in.a` is what Kbuild produces by recursing into each directory — `$(Q)$(MAKE) $(build)=$@ need-builtin=1 need-modorder=1` through scripts/Makefile.build — and none of that recursion was composed or run. So the archive step was scheduled against a prerequisite nothing makes.\n\nNOT THE SAME DEFECT AS 2dfa6b3. That one was a staged wrapper left wearing the `false` freshness probe with its outputs unrecorded, and its corpus case is green. Here no probe runs; the work simply is not in the graph. Diagnose before designing, and expect `$(build)=` — an assignment on the `$(MAKE)` line whose value is a variable — to be part of why the recursion is not admitted. `kati/src-rs/lift.rs` refuses `V=1`-style prefixes and unresolved variables by contract, and `src/lint.rs` reports fourteen distinct nesting reasons, so ask the lint what it says about these lines rather than guessing.\n\nTHE NARRATION CHECK IS STILL OWED. The operator chose this workload partly to test the recipe-printing work against Kbuild's quiet-mode CC/LD/AR/WRAP/SYNC/UPD lines, and at 52 lines against 1171 there is nothing to compare yet. GNU's captured stdout is kept.\n\nREPRODUCING. The ronin tree is at reference/make-projects/linux-6.12.48-ronin with its .config in place. The GNU tree was DELETED to free disk and must be re-extracted from linux-6.12.48.tar.xz beside it, with `.config` copied from the ronin tree so the two stay byte-identical. Root filled to 100% twice during the previous fix, both times from another tenant — our whole footprint is about 5.6G of a 149G disk — so check `df` before extracting 1.7G."
+            }
+        )
+    }
 )
