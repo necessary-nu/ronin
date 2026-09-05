@@ -53,7 +53,7 @@ pub(super) fn refused(arguments: &[&str]) -> Option<String> {
 }
 
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn makefile_makeflags_mutate_switch_table() {
     let decoded = decode_makefile_makeflags(b"", b" -- FOO=bar -rR", b"").unwrap();
@@ -368,7 +368,7 @@ fn unknown_make_option_is_refused() {
 /// taken as quoting the byte after it. A `$` is doubled by the same rule, and
 /// what Ronin does with the doubling when the variable is READ is a decision
 /// of its own — see `docs/make-oracle-divergences.md`.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_switch_argument_reaches_makeflags_quoted() {
     let flags = super::compiler_flag_variables(&parsed(&["make", "--debug=b\\x$y"]));

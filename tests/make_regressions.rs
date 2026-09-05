@@ -157,7 +157,7 @@ fn make_populates_suffix_rule_stem() {
 /// loop. Such a command cannot be composed as a semantic subninja, so the real
 /// child process learns the override from the canonical MAKEFLAGS exported to
 /// every recipe.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn shell_loop_submake_inherits_overrides() {
     let directory = test_directory("shell-loop-overrides");
@@ -194,7 +194,7 @@ fn shell_loop_submake_inherits_overrides() {
 /// Zstd selects a recursive build directory with a deferred `$(shell ...)`.
 /// Kati deliberately leaves that computation as shell command substitution in
 /// a recipe, so Ronin must settle it before parsing the child invocation.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn submake_expands_shell_computed_assignment() {
     let directory = test_directory("submake-shell-assignment");
@@ -220,7 +220,7 @@ fn submake_expands_shell_computed_assignment() {
 
 /// Deferred command substitution must observe files made by the recursive
 /// wrapper's prerequisites, not run during the provisional graph compilation.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn submake_shell_waits_for_prerequisite() {
     let directory = test_directory("submake-shell-boundary");
@@ -386,7 +386,7 @@ fn an_unmoved_stamp_rebuilds_nothing() {
 /// cascades through everything reading the target, on every invocation for
 /// ever. It cost zsh a `zutil.c` compile and a `zutil.so` link a build.
 // [spec:ronin:req:make.remade-target-re-observed/test]
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_forced_recursion_that_moves_nothing_rebuilds_nothing() {
     let directory = test_directory("forced-recursion-no-cascade");
@@ -1426,7 +1426,7 @@ fn make_reports_a_missing_program() {
 /// vim's top-level Makefile is the tree that showed it — one liftable
 /// `cd src && $(MAKE) $@` beside two guards holding `$(MAKE)` calls that are
 /// false for every goal but `test` and `clean` — and it built nothing at all.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn an_unliftable_line_keeps_its_siblings() {
     let directory = test_directory("make-recursion-guard");
@@ -1507,7 +1507,7 @@ fn an_unliftable_line_keeps_its_siblings() {
 /// Proved by a dry run rather than by the build: a composed child's work is
 /// printed and not done, where a nested Make would have been started to find
 /// out what it was.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_subshell_holds_one_invocation() {
     let directory = test_directory("make-recursion-subshell");
@@ -1547,7 +1547,7 @@ fn a_subshell_holds_one_invocation() {
 ///
 /// Proved the same way as the subshell: a dry run prints the composed child's
 /// work, where a nested Make would have been started to find out what it was.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_brace_group_holds_one_invocation() {
     let directory = test_directory("make-recursion-brace");
@@ -2074,6 +2074,47 @@ fn a_goals_segment_keeps_the_switches() {
             "{switches}: the child went the wrong way: {said}"
         );
     }
+}
+
+/// A parent rule that says a file comes OF a recursion is ordering, and the
+/// child inside that recursion keeps the rule that makes the file.
+///
+/// The Linux kernel writes it in `Makefile`: `vmlinux_o` carries
+/// `$(MAKE) -f $(srctree)/scripts/Makefile.vmlinux_o`, and the rule after it
+/// reads `vmlinux.o modules.builtin.modinfo modules.builtin: vmlinux_o` with
+/// `@:` for a recipe.
+///
+/// `@:` writes nothing; `scripts/Makefile.vmlinux_o` does the linking and its
+/// default goal reads `vmlinux.o`. Read as a file the parent makes, the child's
+/// name for it points back at the parent's node, that node waits for the
+/// wrapper, and the wrapper holds the child — a cycle, and the only recipe that
+/// would have written the file is dropped on the way there.
+// [spec:ronin:req:make.recursive-invocation+4/test]
+#[test]
+fn an_alias_for_a_file_the_recursion_makes() {
+    let directory = test_directory("alias-for-a-file-the-recursion-makes");
+    fs::write(
+        directory.join("Makefile"),
+        "all: out\n\t@printf 'all\\n'\n\n\
+         wrapper: source\n\t@$(MAKE) --no-print-directory -f child.mk\n\n\
+         out: wrapper\n\t@:\n\n\
+         source: ; @printf 'source\\n' > source\n\n\
+         .PHONY: all wrapper\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("child.mk"),
+        "__default: out\n\n\
+         out: source ; @printf 'made\\n' > out\n\n\
+         .PHONY: __default\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{reported}");
+    assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "made\n");
 }
 
 /// A Makefile made THROUGH a recursive prerequisite settles, and settles once.
@@ -3442,7 +3483,7 @@ fn a_held_recursive_recipe_holds_its_readers() {
 /// finished and never after it failed — which is what the graph's `&&` join
 /// already means — so it composes, and a dry run prints the children's own
 /// recipes where a nested Make would have been started to find them.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_loop_over_literal_words_composes_each_iteration() {
     for (label, line) in [
@@ -3528,7 +3569,7 @@ fn a_loop_over_literal_words_composes_each_iteration() {
 /// `-k`, where GNU Make 4.4.1 still stops the loop and goes on to build the
 /// unrelated target. Probed: `a` built, `b` absent and status 2 at both job
 /// counts; under `-k all other`, `b` absent and `other` built.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_failed_iteration_stops_the_loop() {
     let directory = test_directory("loop-aborts");
@@ -3595,7 +3636,7 @@ fn a_failed_iteration_stops_the_loop() {
 /// composed children no licence to overlap: the second waits for the first to
 /// finish. `ranlog` reads `a` then `b` and never `OVERLAP`, which is what 4.4.1
 /// writes on this tree at `-j8`.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn loop_iterations_run_one_at_a_time() {
     let directory = test_directory("loop-serial");
@@ -3635,7 +3676,7 @@ fn loop_iterations_run_one_at_a_time() {
 /// `a/b`, which is exactly what 4.4.1 does with it — probed: both `a/built`
 /// and `a/b/built` made. The subshell form leaves each iteration where the
 /// line started, and the two must not be read as one shape.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_bare_cd_in_a_loop_accumulates() {
     let directory = test_directory("loop-bare-cd");
@@ -3674,7 +3715,7 @@ fn a_bare_cd_in_a_loop_accumulates() {
 /// The hard boundary: a word list computed by a command substitution is known
 /// only by running it, so the loop is not lifted — and the line still runs as
 /// written, with the nested Make it names, so the tree still builds.
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_substituted_word_list_stays_nested_and_builds() {
     let directory = test_directory("loop-substituted");
@@ -3731,7 +3772,7 @@ fn a_substituted_word_list_stays_nested_and_builds() {
 /// is not read — `GraphSink::begin_subninja`.
 ///
 /// [`UnitSubgraph::fresh_edges`]: crate::make::sink::UnitSubgraph
-// [spec:ronin:req:make.recursive-invocation+3/test]
+// [spec:ronin:req:make.recursive-invocation+4/test]
 #[test]
 fn a_shared_grandchild_and_a_parents_stub_compose() {
     let directory = test_directory("loop-shared-grandchild");

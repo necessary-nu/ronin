@@ -831,7 +831,7 @@ enum EvaluationPredecessor {
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
 /// shared graph before returning it to the executor.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 // [spec:ronin:req:make.compiler-boundary]
 pub(crate) fn load_with_subninjas(
     root: Compilation,
@@ -1564,7 +1564,8 @@ fn compose_child_groups(
             return Ok(None);
         } else {
             let child_scope = pending.scope;
-            let enclosing = enclosing::for_the_child_of(&descendant_context.enclosing, pending);
+            let enclosing =
+                enclosing::for_the_child_of(&descendant_context.enclosing, pending, sink);
             let child = compile_unit(child, sink, Some(child_scope), &enclosing, resolve, state)?;
             if !child.complete {
                 state.unfinished_units.insert(child_key);

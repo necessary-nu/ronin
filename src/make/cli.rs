@@ -1373,7 +1373,7 @@ fn classify_word(invocation: &mut Invocation, word: &BString) {
 }
 
 /// The evaluation session one Make invocation describes.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 fn session_for(
     invocation: &Invocation,
     makefiles: &[PathBuf],
@@ -1516,7 +1516,7 @@ fn session_for(
 /// The evaluator imports this session's environment snapshot. Recording the
 /// invocation there makes the same mechanism work for the process entry point
 /// and for a semantic subninja compiled inside this process.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 fn record_invocation(session: &mut Session, name: &'static str, value: String) {
     let environment = std::sync::Arc::make_mut(
         session
@@ -1721,7 +1721,7 @@ fn enter_directories(directories: &[PathBuf]) -> Result<PathBuf, Error> {
 /// directory, since that is how a symlinked `make` is normally reached, and the
 /// entry chosen is the one that canonicalizes to this binary — so a different
 /// `make` earlier on the path cannot capture recursion.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
     let program = arguments
         .first()
@@ -2037,7 +2037,7 @@ pub(crate) fn read_without_building(
 
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 // [spec:ronin:req:make.narration+2]
 pub(crate) fn run(
     runner: &Runner,
@@ -2283,7 +2283,7 @@ fn reported_run(
 /// The same switches the children are told, so a Makefile that branches on
 /// `$(findstring s,$(MAKEFLAGS))` is asking about this invocation and not about
 /// the one that spawned it, and the depth it sits at.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 fn record_invocation_variables(
     session: &mut Session,
     invocation: &Invocation,
@@ -2418,7 +2418,7 @@ fn compilation_key(directory: &Path, makefiles: &[PathBuf], makeflags: &str) -> 
 /// same status as any other. The diagnostic is passed through as the evaluator
 /// wrote it, because the evaluator already put the program's name in front of
 /// it; naming it again here would say it twice.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 fn evaluated(
     mut session: Session,
     evals: &[Bytes],
@@ -2593,7 +2593,7 @@ mod tests {
     /// `$(MAKE)` is one word and that word is the invoked path. GNU Make answers
     /// the same way and enough consumers exec the answer that a second word is a
     /// defect — upstream's own suite dies with ENOENT on it.
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn make_variable_is_invoked_path() {
         let arguments = |program: &str| vec![BString::from(program)];
@@ -2619,7 +2619,7 @@ mod tests {
     /// against each other: what was typed has the last word on a switch the
     /// parent had already spoken about, in either direction, and a switch only
     /// the parent named still takes effect.
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn inherits_parent_switches() {
         let under = parsed_under;
@@ -2692,7 +2692,7 @@ mod tests {
     /// Switches and assignments go to MAKEFLAGS, not into `$(MAKE)`. MFLAGS
     /// spells the switches as a command line and carries no assignments, which
     /// is where GNU Make puts the two apart.
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn exports_makeflags_and_mflags() {
         let invocation = parsed(&[
@@ -2723,7 +2723,7 @@ mod tests {
     /// and `base` is the switch table with neither. The three are asserted
     /// together because their relationship is the thing: `base`, one space and
     /// `eval_flags` is exactly the text the reference resolves to.
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn propagates_eval_fragments() {
         let variables = |arguments: &[&str]| super::compiler_flag_variables(&parsed(arguments));
@@ -2820,7 +2820,7 @@ mod tests {
         assert!(parsed(&["make", "--no-print-directory", "-w"]).given(Switch::PrintDirectory));
     }
 
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn propagates_switch_negations() {
         let makeflags = |arguments: &[&str]| {
@@ -3085,7 +3085,7 @@ mod tests {
     /// printing `$(MAKEFLAGS)` rather than reasoned about. `-W` is missing
     /// from it because GNU Make's option table leaves it out: a sub-make is
     /// told which switches were asked for, not which files to pretend about.
-    // [spec:ronin:req:make.recursive-invocation+3/test]
+    // [spec:ronin:req:make.recursive-invocation+4/test]
     #[test]
     fn propagates_inherited_switches() {
         let invocation = parsed(&["make", "-Beikqrstw", "-W", "b.x", "all"]);

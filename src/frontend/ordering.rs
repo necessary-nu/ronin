@@ -10,7 +10,8 @@
 //! `forgiven` module for where the narrowing is kept, and [`crate::build`]'s
 //! `release` module for what acts on it.
 
-use super::{BuildGraph, Edge, Node, nodeuse};
+use super::{BuildGraph, Edge, Node, NodeId, nodeuse};
+use crate::htab::{RapidHashMap, RapidHashSet};
 
 impl BuildGraph {
     /// Everything the edge that makes `node` waits for, of either kind, and
@@ -31,6 +32,86 @@ impl BuildGraph {
             .copied()
             .map(Node)
             .collect()
+    }
+
+    /// Which of `candidates` are made only after one of `marks` has been:
+    /// the nodes whose making waits, however far along the chain, for
+    /// something in `marks`.
+    ///
+    /// One walk answers for every candidate at once. The question is asked of
+    /// a whole set — every file an enclosing unit makes, against the outputs
+    /// of one recursive recipe — and asking it a candidate at a time restarts
+    /// the walk for each, which on a graph this size is the composition's cost
+    /// rather than a lookup's.
+    ///
+    /// Order-only prerequisites count: they are a wait, and a wait is the
+    /// whole of what is being measured. A node this graph does not make waits
+    /// for nothing.
+    pub(crate) fn waiting_on(
+        &self,
+        candidates: impl Iterator<Item = Node>,
+        marks: &[Node],
+    ) -> RapidHashSet<Node> {
+        let mut settled = RapidHashMap::default();
+        for mark in marks {
+            settled.insert(mark.0, true);
+        }
+        let mut waiting = RapidHashSet::default();
+        let mut walk = Vec::new();
+        let mut open = RapidHashSet::default();
+        for candidate in candidates {
+            if self.settle_wait(candidate, &mut settled, &mut walk, &mut open) {
+                waiting.insert(candidate);
+            }
+        }
+        waiting
+    }
+
+    /// Whether `start` waits for anything already settled true, filling in
+    /// the answer for every node the walk passes through.
+    ///
+    /// Iterative because the chain between a goal and a leaf source is as deep
+    /// as the Makefile made it, and a node reached again while it is still
+    /// open is one the walk is already inside: a cycle answers for nothing,
+    /// and reading it as no wait leaves the nodes around it decided by their
+    /// other prerequisites.
+    fn settle_wait(
+        &self,
+        start: Node,
+        settled: &mut RapidHashMap<NodeId, bool>,
+        walk: &mut Vec<(NodeId, bool)>,
+        open: &mut RapidHashSet<NodeId>,
+    ) -> bool {
+        walk.clear();
+        walk.push((start.0, false));
+        while let Some((node, leaving)) = walk.pop() {
+            if leaving {
+                let waits = self.arenas.node(node).generator.is_some_and(|edge| {
+                    self.arenas
+                        .edge(edge)
+                        .input
+                        .iter()
+                        .any(|input| settled.get(input).copied().unwrap_or(false))
+                });
+                settled.insert(node, waits);
+                open.remove(&node);
+                continue;
+            }
+            if settled.contains_key(&node) || !open.insert(node) {
+                continue;
+            }
+            walk.push((node, true));
+            if let Some(edge) = self.arenas.node(node).generator {
+                walk.extend(
+                    self.arenas
+                        .edge(edge)
+                        .input
+                        .iter()
+                        .map(|input| (*input, false)),
+                );
+            }
+        }
+        settled.get(&start.0).copied().unwrap_or(false)
     }
 
     /// Make `edge` wait for additional order-only inputs.

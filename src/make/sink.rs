@@ -722,7 +722,7 @@ impl GraphSink {
     /// could have started, while the child's own timestamps still decide what
     /// work it needs. The wrapper becomes a phony alias for child targets whose
     /// identities remain local to their own recursive compilation units.
-    // [spec:ronin:req:make.recursive-invocation+3]
+    // [spec:ronin:req:make.recursive-invocation+4]
     ///
     /// `begun` is whether the recipe has already run part of itself at a
     /// compilation boundary, which the finished edge has to carry: one of

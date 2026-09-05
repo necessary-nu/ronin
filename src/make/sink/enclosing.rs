@@ -52,6 +52,12 @@ impl GraphSink {
     /// prebuilt is the ordinary case this module exists for, where the file is
     /// on the ground and the child's rule is the stub that must not be read.
     ///
+    /// The other way the premise fails is that the enclosing unit has not made
+    /// the path YET and cannot until the child it is being handed to has run:
+    /// see [`crate::make::enclosing::for_the_child_of`], which takes such a
+    /// path out of what the child is shown rather than asking the ground about
+    /// it, the ground having nothing to say about a file no pass has reached.
+    ///
     /// The moment is the one moment the question has an answer. A `$(MAKE)`
     /// boundary is staged: the parent's prerequisites are built and the read
     /// starts again, so by the time a child is composed the work GNU Make ran
@@ -64,6 +70,20 @@ impl GraphSink {
         }
         let path = std::ffi::OsStr::from_bytes(self.graph.path(enclosing));
         !self.root_directory.join(path).exists()
+    }
+
+    /// Which of `candidates` this graph makes only after one of `marks`.
+    ///
+    /// See [`crate::frontend::BuildGraph::waiting_on`]. Asked of the files the
+    /// enclosing units make, against the outputs of the recursive recipe a
+    /// child is being composed under — which is how a file that comes OF the
+    /// recursion is told from one that was there before it.
+    pub(crate) fn waiting_on(
+        &self,
+        candidates: impl Iterator<Item = Node>,
+        marks: &[Node],
+    ) -> crate::htab::RapidHashSet<Node> {
+        self.graph.waiting_on(candidates, marks)
     }
 
     /// Whether this is a rule of the unit's own for a file an enclosing unit

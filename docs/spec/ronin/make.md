@@ -231,7 +231,7 @@ manifest-derived graph is.
 > description there and leaves its reader Ninja's own repair, which is why the
 > equivalence gate treats that description as destination-specific.
 
-> [spec:ronin:req:make.recursive-invocation+3]
+> [spec:ronin:req:make.recursive-invocation+4]
 > A recursive invocation through `$(MAKE)` that the compiler can statically
 > identify compiles as `subninja`, and it MUST: composition is not optional
 > wherever the identification is possible. Kati evaluates the child Makefile
@@ -271,7 +271,13 @@ manifest-derived graph is.
 > that started the child, so a child's name for such a path is a name for the
 > enclosing unit's node and depends on that producer, and a rule of the
 > child's own for it — zsh's `$(dir_top)/Src/zsh.mdh: ; false # should only
-> happen with make -n` — is not read. Within one recipe, a later child's work
+> happen with make -n` — is not read. "Ran before" is a claim about order and
+> is answered from the graph rather than assumed: a path the enclosing unit
+> makes only by work that waits for THIS recursion — the wrapper's own
+> outputs, and anything reaching them, as in the kernel's `vmlinux.o:
+> vmlinux_o` whose recipe is `@:` while `scripts/Makefile.vmlinux_o` does the
+> linking — is not a path the child finds made, and the child keeps its own
+> rule for it, that rule being the only producer there is. Within one recipe, a later child's work
 > waits on the child before it; across a `.NOTPARALLEL` unit's recipes, on the
 > recipe before it; and in both cases only the work a composition itself made
 > is sequenced, because a child two compositions reach is one copy of one

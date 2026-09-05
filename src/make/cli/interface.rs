@@ -218,7 +218,7 @@ fn command_overrides(invocation: &Invocation) -> String {
 /// past this process: a recursion Ronin composed is bounded by the one Ninja
 /// scheduler, and one it could not compose forks a real Make that has nothing
 /// else to read the budget from.
-// [spec:ronin:req:make.recursive-invocation+3]
+// [spec:ronin:req:make.recursive-invocation+4]
 // [spec:ronin:req:make.jobserver+3]
 pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVariables {
     let SwitchTable { base, mflags } = switch_table(invocation, invocation.effective_jobs());
