@@ -21695,4 +21695,18 @@ children (
             }
         )
     }
+
+    {
+        id a-second-kernel-run-rebuilds-a-tree-gnu-leaves-alone
+        title "A second run over a finished kernel tree rebuilds all of it"
+        kind @fix
+        log (
+            {
+                at 2026-09-05T15:37:19.378278835Z
+                author "brendan@necessary.nu"
+                kind @blocker
+                text "MEASURED AT 3d57103, the commit at which the kernel first builds. linux-6.12.48 at allnoconfig, both trees finished and both invocations run again over them:\n\n  GNU 4.4.1, reference/make-projects/linux-6.12.48, `make -j8`: two lines.\n      CALL    scripts/checksyscalls.sh\n      Kernel: arch/x86/boot/bzImage is ready  (#1)\n\n  Ronin, reference/make-projects/linux-6.12.48-ronin, `make -j8` through the\n  make-named symlink: 1,541 lines, 659 of them `CC`, every archive rebuilt and\n  vmlinux relinked. rc=0 and the tree is correct, but the work is redone.\n\nTHE FIRST LINE IS THE LEAD. Ronin's second run opens `[2/3] HOSTCC scripts/basic/fixdep`, so `scripts/basic/fixdep` is stale on a tree that just built it. Kbuild runs every compile through `if_changed_dep`, whose recipe depends on fixdep, so a fixdep that is newer than every object is on its own enough to rebuild the tree — that is the first thing to confirm or eliminate, before anything about `.cmd` files or command hashes.\n\nNOT A REGRESSION FROM EITHER OF THE TWO FIXES THAT LANDED TODAY: the same full rebuild was in the instrumented run taken before them, on a tree that had already compiled its whole object graph.\n\nWHAT MAKES IT WORTH ITS OWN NODE. The kernel is the workload the front end is now measured on, and an incremental build that is not incremental is the difference between a five-minute edit-compile loop and a five-minute wait per keystroke. It is also the shape most likely to be hiding a freshness answer that is wrong rather than merely slow."
+            }
+        )
+    }
 )
