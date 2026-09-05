@@ -21674,4 +21674,25 @@ children (
             }
         )
     }
+
+    {
+        id a-restat-is-propagated-by-one-walk-per-consumer
+        title "Propagate a restat through its consumers in one walk, not one per consumer"
+        kind @perf
+        log (
+            {
+                at 2026-09-05T15:13:02.526584588Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-09-05T15:13:28.49706346Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "FOUND WHILE COMPOSING THE KERNEL'S FINAL LINK, and it is the thing an earlier attempt on a-parents-alias-for-a-file-its-recursion-makes-closes-a-cycle called a spin. It is not a loop.\n\n`Builder::settle_edge` calls `recompute_consumers_after_restat`, which walked the restat'd edge's entire transitive consumer cone and ran a FULL `recompute_dirty_with_validations` for every output of every consumer. Each of those walks the whole input closure of that output, so the propagation is O(consumers x graph).\n\nMEASURED, by instrumenting the release binary and building linux-6.12.48 at allnoconfig through the make-named symlink at -j8. The composed graph is 51,060 nodes and 50,346 edges. One propagation reached 48,665 consumers and took 5.26 seconds. Over the run: 1,520 propagations and 415.5 seconds of the first eleven minutes inside this one function, and after the last edge the invocation queued 223 more of them and was still going ten minutes later, at 100% CPU with flat RSS. `perf` put 48% in `graph::DirtyEvaluator::evaluate`, 30% in `Builder::settle_edge` and 15% in `graph::intermediate::push_intermediates`; gdb put every sample inside one `settle_edge` frame that never returned to `Builder::build`.\n\nTHE FIX IS ONE WALK, `graph::recompute_dirty_for_all`. The consumer cone is collected first and asked as a set, under one evaluator generation. That is the same answer, not a weaker one: `DirtyEvaluator::evaluate` settles an edge only after every one of its inputs has been settled in the same walk, so the first answer a node gets is already the answer a walk starting anywhere else would give it, and the repeats were redundant. `recompute_dirty_with_validations` stays as the single-target spelling and now delegates.\n\nRESULT. The kernel tree that took eleven minutes to reach its last edge takes under three, and the invocation finishes: `vmlinux` at 4,166,180 bytes — the same size GNU writes — `Kernel: arch/x86/boot/bzImage is ready`, rc=0. Every gate green, including the 425 pinned Ninja upstream tests and the make equivalence corpus at 0 disagreements, which is where a change to the dirty scan would show if it had changed an answer."
+            }
+        )
+    }
 )

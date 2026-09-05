@@ -1141,7 +1141,7 @@ impl<'a> Builder<'a> {
             self.graph,
             &mut self.runtime,
             &mut self.scratch,
-            node,
+            std::slice::from_ref(&node),
             &mut stat,
         )?;
         self.plan
@@ -1988,6 +1988,13 @@ impl<'a> Builder<'a> {
         Ok((pruned, Vec::new()))
     }
 
+    /// Settle everything above a `restat` again, in one walk over the graph
+    /// rather than one walk per consumer.
+    ///
+    /// What the restat changed is beneath all of them, so the set is asked
+    /// together: see [`recompute_dirty_with_validations`] for why one walk is the
+    /// same answer, and for what asking them one at a time costs on a graph
+    /// the size of a composed kernel build.
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
         let mut queue = Vec::new();
         for output in &self.graph.edge(edge).out {
@@ -1995,27 +2002,27 @@ impl<'a> Builder<'a> {
             queue.extend(self.graph.node_validation_uses(*output).iter().copied());
         }
         self.visited_edges.begin(self.graph.edge_count());
-        let disk = self.disk.clone();
+        let mut consumers = Vec::new();
         while let Some(dependent) = queue.pop() {
             if self.visited_edges.replace(dependent.index()) {
                 continue;
             }
             let outputs: &[NodeId] = &self.graph.edge(dependent).out;
-            for &output in outputs {
-                let mut stat = |path: &Path| disk.stat(path);
-                recompute_dirty_with_validations(
-                    self.graph,
-                    &mut self.runtime,
-                    &mut self.scratch,
-                    output,
-                    &mut stat,
-                )?;
-            }
+            consumers.extend_from_slice(outputs);
             for &output in outputs {
                 queue.extend(self.graph.node(output).uses.iter().copied());
                 queue.extend(self.graph.node_validation_uses(output).iter().copied());
             }
         }
+        let disk = self.disk.clone();
+        let mut stat = |path: &Path| disk.stat(path);
+        recompute_dirty_with_validations(
+            self.graph,
+            &mut self.runtime,
+            &mut self.scratch,
+            &consumers,
+            &mut stat,
+        )?;
         Ok(())
     }
 
@@ -2077,7 +2084,7 @@ impl<'a> Builder<'a> {
                 self.graph,
                 &mut self.runtime,
                 &mut self.scratch,
-                node,
+                std::slice::from_ref(&node),
                 &mut stat,
             )?);
         }

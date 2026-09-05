@@ -783,7 +783,7 @@ impl BuildGraph {
             &self.arenas,
             runtime,
             &mut TraversalScratch::default(),
-            target,
+            std::slice::from_ref(&target),
             stat,
         )?;
         Ok(runtime.node(target).dirty())

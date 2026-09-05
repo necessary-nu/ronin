@@ -1003,6 +1003,7 @@ assertions (
     {id a-makefiles-own-makeflags-jn-cannot-resize-an-existing-budget, kind @complete, author "brendan@necessary.nu", at 2026-09-04T15:04:16.872219848Z}
     {id a-recursion-on-a-multi-target-pattern-rule-runs-the-freshness-probe, kind @doing, author "brendan@necessary.nu", at 2026-09-04T15:49:16.714649559Z}
     {id a-parents-alias-for-a-file-its-recursion-makes-closes-a-cycle, kind @doing, author "brendan@necessary.nu", at 2026-09-05T13:47:01.940427454Z}
+    {id a-restat-is-propagated-by-one-walk-per-consumer, kind @doing, author "brendan@necessary.nu", at 2026-09-05T15:13:02.526584588Z}
 )
 
 impl_evidence (

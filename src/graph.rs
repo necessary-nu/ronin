@@ -898,11 +898,26 @@ where
     evaluator.evaluate(graph, runtime, node, stat)
 }
 
+/// Scan a whole set of targets, and the validations under them, in one walk.
+///
+/// One traversal, so a node under two of the targets is scanned once rather
+/// than once per target. That is not a weaker answer:
+/// [`DirtyEvaluator::evaluate`] settles an edge only after every one of its
+/// inputs has been settled in the same walk, so the first answer a node gets
+/// is already the answer a walk starting anywhere else would give it, and the
+/// repeats are redundant.
+///
+/// The difference is the whole cost of propagating a `restat` through a large
+/// graph. Asking about the consumers one at a time restarts the walk for each,
+/// which is quadratic in the graph: the Linux kernel at `allnoconfig` composes
+/// about 50,000 edges, one such propagation reached 48,665 consumers and took
+/// 5.3 seconds, and the invocation spent 415 seconds of its first eleven
+/// minutes inside this one question.
 pub(crate) fn recompute_dirty_with_validations<F>(
     graph: &Graph,
     runtime: &mut RuntimeState,
     scratch: &mut TraversalScratch,
-    node: NodeId,
+    nodes: &[NodeId],
     stat: &mut F,
 ) -> Result<Vec<NodeId>, GraphError>
 where
@@ -915,11 +930,17 @@ where
     }
 
     scratch.evaluator.begin(graph);
-    scratch.evaluator.evaluate(graph, runtime, node, stat)?;
+    for &node in nodes {
+        scratch.evaluator.evaluate(graph, runtime, node, stat)?;
+    }
     scratch.seen_nodes.begin(graph.nodes.len());
     scratch.seen_edges.begin(graph.edges.len());
     let mut validations = Vec::new();
-    let mut work = vec![Work::Enter(node)];
+    let mut work = nodes
+        .iter()
+        .rev()
+        .map(|node| Work::Enter(*node))
+        .collect::<Vec<_>>();
     while let Some(item) = work.pop() {
         match item {
             Work::Enter(node) => {
@@ -1697,7 +1718,7 @@ mod tests {
             &graph,
             &mut runtime,
             &mut TraversalScratch::default(),
-            output,
+            std::slice::from_ref(&output),
             &mut stat,
         )
         .unwrap();
@@ -1950,7 +1971,7 @@ mod tests {
             &graph,
             &mut runtime,
             &mut TraversalScratch::default(),
-            output,
+            std::slice::from_ref(&output),
             &mut stat,
         )
         .unwrap();
