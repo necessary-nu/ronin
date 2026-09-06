@@ -240,6 +240,14 @@ pub(crate) struct Graph {
     /// largest structure a large manifest builds. Holding them aside keeps the
     /// feature exactly and charges only the nodes that use it.
     validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
+    /// The edges that name a `dyndep` binding, kept aside from the arena.
+    ///
+    /// Beside it for the reason `validation_uses` is, with one more: which
+    /// edges have a dyndep is asked once per dirty-scan reset, and a reset is
+    /// taken per freshness probe. A dyndep edge is rare — a Makefile
+    /// compilation makes none — so the question must be asked of the edges
+    /// that answer yes rather than of every edge in the graph.
+    dyndep_edges: Vec<EdgeId>,
     deferred_freshness: crate::htab::RapidHashMap<EdgeId, DeferredFreshness>,
     completion_joins: crate::htab::RapidHashMap<EdgeId, NodeId>,
     /// What a stopped command may be made to give back, for the edges a front

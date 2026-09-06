@@ -82,6 +82,24 @@ pub(crate) struct DeferredFreshness {
 }
 
 impl Graph {
+    /// Every edge that names a `dyndep` binding, in the order they were
+    /// resolved.
+    pub(crate) fn dyndep_edges(&self) -> &[EdgeId] {
+        &self.dyndep_edges
+    }
+
+    /// Say that `edge` reads its extra inputs from `dyndep`.
+    ///
+    /// The only way to set the binding: `dyndep_edges` is what makes the set
+    /// findable without a walk of the arena, and a binding written straight to
+    /// the edge would not be in it. An edge resolved twice joins the list once.
+    pub(crate) fn set_edge_dyndep(&mut self, edge: EdgeId, dyndep: NodeId) {
+        if self.edge(edge).dyndep.is_none() {
+            self.dyndep_edges.push(edge);
+        }
+        self.edge_mut(edge).dyndep = Some(dyndep);
+    }
+
     pub(crate) fn deferred_freshness(&self, edge: EdgeId) -> Option<&DeferredFreshness> {
         self.deferred_freshness.get(&edge)
     }

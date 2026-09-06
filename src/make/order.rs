@@ -236,11 +236,55 @@ impl SerialJobs {
     }
 }
 
+/// Every edge one unit's compilation has taken into its closure, in the order
+/// it took them and each of them once.
+///
+/// The order is the answer and the set is only how the question is asked: a
+/// unit's closure is handed to its parent to be adopted in turn, and what the
+/// graph is built from is the sequence. The set is what keeps the membership
+/// question off that sequence — a unit's closure reaches the size of the whole
+/// graph at the root of a kernel tree, and asking a list of that length per
+/// edge adopted is quadratic in the subtree.
+///
+/// Only adoption deduplicates. [`Self::push`] takes an edge whether or not the
+/// closure holds it, because its callers hand over a unit's own emission and
+/// its wrappers, which arrive distinct and are the closure's first entries.
+pub(super) struct EdgeClosure {
+    edges: Vec<Edge>,
+    seen: crate::htab::RapidHashSet<Edge>,
+}
+
+impl EdgeClosure {
+    /// The closure a unit starts with: the edges its own Makefiles emitted.
+    pub(super) fn of(edges: Vec<Edge>) -> Self {
+        let seen = edges.iter().copied().collect();
+        Self { edges, seen }
+    }
+
+    /// Take one edge this unit made itself.
+    pub(super) fn push(&mut self, edge: Edge) {
+        self.seen.insert(edge);
+        self.edges.push(edge);
+    }
+
+    /// Take one edge a child contributed, if the closure has not got it.
+    fn adopt(&mut self, edge: Edge) {
+        if self.seen.insert(edge) {
+            self.edges.push(edge);
+        }
+    }
+
+    /// The closure, in the order it was taken.
+    pub(super) fn into_edges(self) -> Vec<Edge> {
+        self.edges
+    }
+}
+
 /// Take what one recipe's children contribute into the unit's closure, and
 /// what the ones this recipe composed made into what the unit made.
 pub(super) fn adopt_child_groups(
     child_groups: Vec<ChildGroup>,
-    subtree_edges: &mut Vec<Edge>,
+    subtree_edges: &mut EdgeClosure,
     fresh_edges: &mut Vec<Edge>,
 ) {
     for group in child_groups {
@@ -248,9 +292,99 @@ pub(super) fn adopt_child_groups(
             fresh_edges.extend(group.subgraph.fresh_edges.iter().copied());
         }
         for edge in group.subgraph.edges {
-            if !subtree_edges.contains(&edge) {
-                subtree_edges.push(edge);
-            }
+            subtree_edges.adopt(edge);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EdgeClosure, adopt_child_groups};
+    use crate::frontend::{BuildGraph, Edge, EdgeSpec, Template};
+    use crate::make::sink::{ChildGroup, UnitSubgraph};
+
+    /// As many edges as a test wants, to stand for what a unit and its children
+    /// contribute to one closure.
+    fn edges(graph: &mut BuildGraph, count: usize) -> Vec<Edge> {
+        let root = graph.root();
+        let command = graph.binding(b"command");
+        let rule = graph
+            .define_rule(root, b"touch", vec![(command, Template::literal(b"true"))])
+            .expect("rule");
+        (0..count)
+            .map(|at| {
+                let output = graph.node(format!("out{at}").as_bytes()).expect("node");
+                graph
+                    .add_edge(EdgeSpec {
+                        scope: root,
+                        rule,
+                        explicit_outputs: &[output],
+                        implicit_outputs: &[],
+                        explicit_inputs: &[],
+                        implicit_inputs: &[],
+                        order_only_inputs: &[],
+                        validations: &[],
+                        always_dirty: false,
+                        intermediate: false,
+                        has_touchable_recipe: false,
+                        outputs_unaliased: false,
+                        outputs_low_resolution: false,
+                        bindings: Vec::new(),
+                    })
+                    .expect("edge")
+            })
+            .collect()
+    }
+
+    fn group(edges: &[Edge]) -> ChildGroup {
+        ChildGroup {
+            subgraph: UnitSubgraph {
+                targets: Vec::new(),
+                edges: edges.to_vec(),
+                fresh_edges: Vec::new(),
+            },
+            fresh: false,
+        }
+    }
+
+    /// A child two recipes both reach contributes its edges once, and the
+    /// closure stays in the order the compilation took them. The order is what
+    /// the graph is built from, so answering the membership question with a set
+    /// must not answer the ordering one differently.
+    #[test]
+    fn ronin_make_a_shared_child_lands_once_ordered() {
+        let mut graph = BuildGraph::new();
+        let made = edges(&mut graph, 5);
+        let mut closure = EdgeClosure::of(vec![made[0]]);
+        let mut fresh = Vec::new();
+        closure.push(made[1]);
+        adopt_child_groups(vec![group(&[made[3], made[2]])], &mut closure, &mut fresh);
+        // A second recipe reaching the same child, and one edge more.
+        adopt_child_groups(
+            vec![group(&[made[2], made[4], made[3]])],
+            &mut closure,
+            &mut fresh,
+        );
+        assert_eq!(
+            closure.into_edges(),
+            vec![made[0], made[1], made[3], made[2], made[4]]
+        );
+    }
+
+    /// An edge the unit already holds is not adopted a second time, whether it
+    /// came from the unit's own emission or from a wrapper it pushed.
+    #[test]
+    fn ronin_make_a_closure_keeps_own_edges_once() {
+        let mut graph = BuildGraph::new();
+        let made = edges(&mut graph, 3);
+        let mut closure = EdgeClosure::of(vec![made[0], made[1]]);
+        let mut fresh = Vec::new();
+        closure.push(made[2]);
+        adopt_child_groups(
+            vec![group(&[made[1], made[2], made[0]])],
+            &mut closure,
+            &mut fresh,
+        );
+        assert_eq!(closure.into_edges(), vec![made[0], made[1], made[2]]);
     }
 }

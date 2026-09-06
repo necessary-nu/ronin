@@ -1248,10 +1248,10 @@ fn compose_subninjas(
         // Taken by `compile_unit`, into the context the children read.
         generated: _,
     } = unit;
-    let mut subtree_edges = edges;
     // What this compilation made, as against what it reached: its own edges,
     // then each recipe's wrapper and the children that recipe composed.
-    let mut fresh_edges = subtree_edges.clone();
+    let mut fresh_edges = edges.clone();
+    let mut subtree_edges = order::EdgeClosure::of(edges);
     let disk = freshness_disk(descendant_context, state)?;
     let (ordered, mut holds) = order::dependency_ordered(subninjas, sink);
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
@@ -1423,7 +1423,7 @@ fn compose_subninjas(
     }
     Ok(settled_unit(
         targets,
-        subtree_edges,
+        subtree_edges.into_edges(),
         fresh_edges,
         &holds,
         &serial_jobs,

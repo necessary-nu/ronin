@@ -962,7 +962,7 @@ impl BuildGraph {
         if !self.arenas.edge(edge.0).input.contains(&dyndep) {
             return Err(FrontendError::DyndepNotInput { path: path.into() });
         }
-        self.arenas.edge_mut(edge.0).dyndep = Some(dyndep);
+        self.arenas.set_edge_dyndep(edge.0, dyndep);
         Ok(())
     }
 

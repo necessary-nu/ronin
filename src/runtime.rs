@@ -311,8 +311,13 @@ impl RuntimeState {
         self.deferred.clear();
         self.searched_names.clear();
         self.head_names.clear();
-        for edge in graph.edge_ids() {
-            if let Some(dyndep) = graph.edge(edge).dyndep {
+        // A reset is taken per freshness probe, and a Make composition takes
+        // thousands of those against a graph that grows with every unit, so
+        // nothing here may be proportional to the graph. The dyndep edges are
+        // asked of the list the graph keeps rather than found by walking the
+        // arena for them.
+        for edge in graph.dyndep_edges() {
+            if let Some(dyndep) = graph.edge(*edge).dyndep {
                 self.node_mut(dyndep).set_dyndep_pending(true);
             }
         }
@@ -375,7 +380,7 @@ mod tests {
         let dyndep = mknode(&mut graph, BString::from("out.dd"));
         graph.node_mut(output).generator = Some(edge);
         graph.edge_mut(edge).out.push(output);
-        graph.edge_mut(edge).dyndep = Some(dyndep);
+        graph.set_edge_dyndep(edge, dyndep);
         let node_count = graph.node_ids().len();
         let edge_count = graph.edge_count();
 
