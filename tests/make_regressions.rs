@@ -218,6 +218,56 @@ fn submake_expands_shell_computed_assignment() {
     );
 }
 
+/// A `$(shell)` runs once however many staging passes re-read the makefile it
+/// is written in, and an exported recursive value is what makes that hard.
+///
+/// Building the child environment a `$(shell)` runs under expands whatever the
+/// makefile exported, so an exported value that reads the ground asks its own
+/// question WHILE the shell's is still being answered. A record kept in the
+/// order answers arrive puts the inner question first, and a repeated read
+/// consults it in the order it ASKS — so the two disagree from the first such
+/// `$(shell)` onwards and every one after it runs again on every pass. kbuild
+/// exports a recursive `KERNELRELEASE` that reads a file, which is why a
+/// no-op kernel build ran its compiler feature probes seven times over.
+// [spec:ronin:req:make.recursive-invocation+4/test]
+#[test]
+fn an_exported_ground_read_leaves_one_shell_asked() {
+    let directory = test_directory("submake-shell-exported-read");
+    fs::write(directory.join("note.txt"), "noted\n").unwrap();
+    fs::write(
+        directory.join("sub.mk"),
+        "child: ; @printf '%s %s\\n' '$(VALUE)' '$(READY)' > result\n\
+         .PHONY: child\n",
+    )
+    .unwrap();
+    // The `$(shell cat stamp)` on the recursive line is what keeps this read
+    // from being carried whole across the staging pass, so the pass past the
+    // boundary reads the makefile again — which is the only way the record's
+    // order is ever consulted, and is the shape kbuild's own top Makefile has.
+    fs::write(
+        directory.join("Makefile"),
+        "export NOTE = $(file < note.txt)\n\
+         MARK := $(shell printf tick >> ticks; printf marked)\n\
+         all: stamp\n\
+         \t+$(MAKE) --no-print-directory -f sub.mk child VALUE=$(MARK) READY=$(shell cat stamp)\n\
+         stamp: ; @printf ready > $@\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "marked ready\n"
+    );
+    // One `tick` however many passes the boundary took, which is what GNU
+    // Make's single read of this makefile leaves behind.
+    assert_eq!(fs::read_to_string(directory.join("ticks")).unwrap(), "tick");
+}
+
 /// Deferred command substitution must observe files made by the recursive
 /// wrapper's prerequisites, not run during the provisional graph compilation.
 // [spec:ronin:req:make.recursive-invocation+4/test]
