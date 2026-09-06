@@ -309,6 +309,10 @@ pub struct GraphSink {
     /// whole graph — a composition staging one wrapper per unit against a graph
     /// that grows with every unit pays for that sizing once per unit.
     subninja_freshness: crate::runtime::RuntimeState,
+    /// The traversal buffers that scan uses, kept for the same reason and at
+    /// the same cost: sized to the whole graph, so a composition staging one
+    /// wrapper per unit pays for the sizing once rather than once per unit.
+    subninja_scratch: crate::graph::TraversalScratch,
     /// kati's rule handles to Ronin's. kati mints one rule per edge and
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
@@ -410,6 +414,7 @@ impl GraphSink {
         Self {
             graph,
             subninja_freshness: crate::runtime::RuntimeState::default(),
+            subninja_scratch: crate::graph::TraversalScratch::default(),
             root_directory: root_directory.to_owned(),
             unit: Unit {
                 scope,
@@ -952,10 +957,13 @@ impl GraphSink {
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
     {
-        if self
-            .graph
-            .edge_dirty_with(edge, stat, asserted, &mut self.subninja_freshness)?
-        {
+        if self.graph.edge_dirty_with(
+            edge,
+            stat,
+            asserted,
+            &mut self.subninja_freshness,
+            &mut self.subninja_scratch,
+        )? {
             return Ok(true);
         }
         self.graph.set_edge_rule(edge, self.phony);

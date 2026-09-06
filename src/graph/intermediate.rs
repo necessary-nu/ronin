@@ -10,7 +10,7 @@
 //! Whether the file is worth creating is the other question, and only the
 //! consumer can answer it. So it is asked here, on the way back down.
 
-use super::{DirtyEvaluator, EdgeId, Graph, NodeId};
+use super::{DirtyEvaluator, EdgeId, Graph, NodeId, Step};
 use crate::runtime::{FileTime, RuntimeState};
 
 /// Whether this edge's outputs are a file the Makefile never names, invented to
@@ -105,23 +105,32 @@ impl DirtyEvaluator {
     /// is not there. Only the filesystem's own answer counts for that, never
     /// the mtime a node is carrying: an absent intermediate and a phony output
     /// are both standing in something else's.
+    ///
+    /// The edges already walked are the scan's, not this target's, and they are
+    /// held for as long as the scan is. Asking about a whole set of targets is
+    /// one walk from all of them rather than one walk each — the same reduction
+    /// [`super::recompute_dirty_with_validations`] makes for the scan itself,
+    /// for the same reason and on the same set. It is the same answer because
+    /// the walk leaves an edge only once everything beneath it has been left,
+    /// so an edge reached again from a later target is one whose inputs were
+    /// settled before its own answer was taken, and taking it a second time can
+    /// only reach the answer it already has. Restarting per target is what made
+    /// a restat's propagation quadratic: over a finished Linux kernel tree a
+    /// no-op invocation asked this of 9.4 million consumers and spent 45% of
+    /// its time here.
     pub(super) fn push_intermediates(
         &mut self,
         graph: &Graph,
         runtime: &mut RuntimeState,
         target: NodeId,
     ) {
-        enum Step {
-            Enter(EdgeId),
-            Leave(EdgeId),
-        }
-
-        self.pushed.begin(graph.edge_count());
         let must_make = runtime.node(target).dirty() || runtime.node(target).absent_on_disk();
         let Some(root) = graph.node(target).generator.filter(|_| must_make) else {
             return;
         };
-        let mut work = vec![Step::Enter(root)];
+        let mut work = std::mem::take(&mut self.pushes);
+        work.clear();
+        work.push(Step::Enter(root));
         while let Some(step) = work.pop() {
             match step {
                 Step::Enter(edge) => {
@@ -160,6 +169,7 @@ impl DirtyEvaluator {
                 }
             }
         }
+        self.pushes = work;
     }
 }
 
@@ -223,6 +233,48 @@ mod tests {
         assert!(dirty);
         assert!(runtime.node(first).dirty());
         assert!(runtime.node(second).dirty());
+    }
+
+    /// Two goals over one intermediate, asked together. The walk that asks for
+    /// intermediates holds its marks for the whole scan rather than restarting
+    /// per goal, so the second goal never re-enters the chain the first walked
+    /// — and has to reach the same answer all the same, because the walk
+    /// leaves an edge only once everything beneath it has been left.
+    #[test]
+    fn ronin_graph_two_goals_share_one_intermediate_walk() {
+        let mut graph = Graph::default();
+        let middle = generated(&mut graph, "mid", "src");
+        let first = generated(&mut graph, "first", "mid");
+        let second = generated(&mut graph, "second", "mid");
+        for goal in [first, second] {
+            graph
+                .edge_mut(graph.node(goal).generator.unwrap())
+                .intermediate = false;
+        }
+
+        let mtimes = BTreeMap::from([
+            ("src".to_owned(), 3),
+            ("first".to_owned(), 2),
+            ("second".to_owned(), 2),
+        ]);
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        let goals = [first, second];
+        crate::graph::recompute_dirty_with_validations(
+            &graph,
+            &mut runtime,
+            &mut crate::graph::TraversalScratch::default(),
+            &goals,
+            None,
+            &mut stat,
+        )
+        .unwrap();
+        assert!(runtime.node(first).dirty());
+        assert!(runtime.node(second).dirty());
+        assert!(
+            runtime.node(middle).dirty(),
+            "the intermediate both goals read was not asked for"
+        );
     }
 
     /// A bare `.SECONDARY:` makes every file intermediate, so the goal reads a

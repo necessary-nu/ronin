@@ -10,6 +10,7 @@ mod intermediate;
 mod marks;
 mod path;
 mod peer;
+mod reconsidered;
 mod searched;
 mod unmade;
 mod validation;
@@ -33,6 +34,7 @@ pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::{nodepath_bytes, shell_escape_path};
 pub(crate) use peer::trigger_output;
+pub(crate) use reconsidered::Reconsidered;
 use searched::settle_searched_outputs;
 pub(crate) use searched::{
     SettledNameReference, SettledNames, SettledView, elsewhere_mtime, mark_written_here,
@@ -700,17 +702,40 @@ where
     Ok(dirty)
 }
 
+/// One step of a dirty scan, held outside the walk so its stack can outlive it.
+///
+/// A scan of a restat's consumers runs once per consumer, millions of times
+/// over a composed kernel build, and a stack allocated per walk is a malloc and
+/// a free on each of them.
+enum Work {
+    Enter(NodeId),
+    Finish(EdgeId),
+}
+
+/// One step of the walk that asks for intermediates, held for the same reason.
+enum Step {
+    Enter(EdgeId),
+    Leave(EdgeId),
+}
+
 #[derive(Default)]
 struct DirtyEvaluator {
     nodes: VisitMarks,
     edges: VisitMarks,
     pushed: MarkSet,
+    work: Vec<Work>,
+    /// The nodes on the way down, so a cycle can be named by the path around it
+    /// rather than merely reported. One entry per active edge, holding the node
+    /// the edge was reached through.
+    path: Vec<NodeId>,
+    pushes: Vec<Step>,
 }
 
 impl DirtyEvaluator {
     fn begin(&mut self, graph: &Graph) {
         self.nodes.begin(graph.nodes.len());
         self.edges.begin(graph.edges.len());
+        self.pushed.begin(graph.edges.len());
     }
 }
 
@@ -728,21 +753,20 @@ impl DirtyEvaluator {
         graph: &Graph,
         runtime: &mut RuntimeState,
         target: NodeId,
+        restriction: Option<&Reconsidered<'_>>,
         stat: &mut F,
     ) -> Result<bool, GraphError>
     where
         F: FnMut(&Path) -> io::Result<i64>,
     {
-        enum Work {
-            Enter(NodeId),
-            Finish(EdgeId),
-        }
-
-        let mut work = vec![Work::Enter(target)];
-        // The nodes on the way down, so a cycle can be named by the path around
-        // it rather than merely reported. One entry per active edge, holding
-        // the node the edge was reached through.
-        let mut path = Vec::new();
+        // Taken rather than borrowed, so the walk can hold `self` as well. A
+        // scan that fails leaves them where it took them and the next one
+        // grows its own; nothing reads a scan's stack after it has answered.
+        let mut work = std::mem::take(&mut self.work);
+        let mut path = std::mem::take(&mut self.path);
+        work.clear();
+        path.clear();
+        work.push(Work::Enter(target));
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => match self.nodes.get(node.index()) {
@@ -781,6 +805,12 @@ impl DirtyEvaluator {
                             self.nodes.set(node.index(), VisitState::Done);
                             continue;
                         };
+
+                        if restriction.is_some_and(|cone| !cone.settles(graph, runtime, node, edge))
+                        {
+                            self.nodes.set(node.index(), VisitState::Done);
+                            continue;
+                        }
 
                         match self.edges.get(edge.index()) {
                             VisitState::Done => {
@@ -834,6 +864,8 @@ impl DirtyEvaluator {
                 }
             }
         }
+        self.work = work;
+        self.path = path;
         self.push_intermediates(graph, runtime, target);
         Ok(runtime.node(target).dirty())
     }
@@ -895,7 +927,7 @@ where
 {
     let mut evaluator = DirtyEvaluator::default();
     evaluator.begin(graph);
-    evaluator.evaluate(graph, runtime, node, stat)
+    evaluator.evaluate(graph, runtime, node, None, stat)
 }
 
 /// Scan a whole set of targets, and the validations under them, in one walk.
@@ -918,6 +950,7 @@ pub(crate) fn recompute_dirty_with_validations<F>(
     runtime: &mut RuntimeState,
     scratch: &mut TraversalScratch,
     nodes: &[NodeId],
+    restriction: Option<&Reconsidered<'_>>,
     stat: &mut F,
 ) -> Result<Vec<NodeId>, GraphError>
 where
@@ -931,7 +964,9 @@ where
 
     scratch.evaluator.begin(graph);
     for &node in nodes {
-        scratch.evaluator.evaluate(graph, runtime, node, stat)?;
+        scratch
+            .evaluator
+            .evaluate(graph, runtime, node, restriction, stat)?;
     }
     scratch.seen_nodes.begin(graph.nodes.len());
     scratch.seen_edges.begin(graph.edges.len());
@@ -947,6 +982,9 @@ where
                 let Some(edge) = graph.node(node).generator else {
                     continue;
                 };
+                if restriction.is_some_and(|cone| !cone.settles(graph, runtime, node, edge)) {
+                    continue;
+                }
                 if scratch.seen_edges.replace(edge.index()) {
                     continue;
                 }
@@ -965,7 +1003,7 @@ where
                 }
                 scratch
                     .evaluator
-                    .evaluate(graph, runtime, validation, stat)?;
+                    .evaluate(graph, runtime, validation, restriction, stat)?;
                 work.push(Work::RecordValidation(validation));
                 work.push(Work::Enter(validation));
             }
@@ -1719,6 +1757,7 @@ mod tests {
             &mut runtime,
             &mut TraversalScratch::default(),
             std::slice::from_ref(&output),
+            None,
             &mut stat,
         )
         .unwrap();
@@ -1972,6 +2011,7 @@ mod tests {
             &mut runtime,
             &mut TraversalScratch::default(),
             std::slice::from_ref(&output),
+            None,
             &mut stat,
         )
         .unwrap();

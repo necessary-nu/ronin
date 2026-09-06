@@ -2,8 +2,8 @@
 
 use crate::error::{BuildError, BuildOperation, BuildStop, ProcessError};
 use crate::graph::{
-    EdgeId, Graph, NodeId, PathStyle, TraversalScratch, edgeadddeps, edgehash, nodestat_with,
-    recompute_dirty_with_validations, recompute_edge_dirty_with,
+    EdgeId, Graph, NodeId, PathStyle, Reconsidered, TraversalScratch, edgeadddeps, edgehash,
+    nodestat_with, recompute_dirty_with_validations, recompute_edge_dirty_with,
 };
 use crate::names::Names;
 use crate::os::RealDiskInterface;
@@ -1142,6 +1142,7 @@ impl<'a> Builder<'a> {
             &mut self.runtime,
             &mut self.scratch,
             std::slice::from_ref(&node),
+            None,
             &mut stat,
         )?;
         self.plan
@@ -1988,13 +1989,20 @@ impl<'a> Builder<'a> {
         Ok((pruned, Vec::new()))
     }
 
-    /// Settle everything above a `restat` again, in one walk over the graph
-    /// rather than one walk per consumer.
+    /// Settle everything above a `restat` again, in one walk over the consumers
+    /// rather than one walk per consumer or one walk over the whole graph.
     ///
     /// What the restat changed is beneath all of them, so the set is asked
     /// together: see [`recompute_dirty_with_validations`] for why one walk is the
     /// same answer, and for what asking them one at a time costs on a graph
     /// the size of a composed kernel build.
+    ///
+    /// The consumers are also the whole of what can have changed, and the walk
+    /// is told so. Descending past them re-settles a graph nothing has written
+    /// to since it was last settled, and reaches the answer already standing
+    /// there: over a finished Linux kernel tree that descent recomputed 42,400
+    /// of the graph's 50,346 edges on each of 7,413 restats — 314 million
+    /// recomputations to reach 9.4 million consumers.
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
         let mut queue = Vec::new();
         for output in &self.graph.edge(edge).out {
@@ -2021,6 +2029,7 @@ impl<'a> Builder<'a> {
             &mut self.runtime,
             &mut self.scratch,
             &consumers,
+            Some(&Reconsidered::new(&self.visited_edges)),
             &mut stat,
         )?;
         Ok(())
@@ -2085,6 +2094,7 @@ impl<'a> Builder<'a> {
                 &mut self.runtime,
                 &mut self.scratch,
                 std::slice::from_ref(&node),
+                None,
                 &mut stat,
             )?);
         }

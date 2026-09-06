@@ -755,18 +755,20 @@ impl BuildGraph {
     }
 
     /// Evaluate one staged edge's timestamp freshness without executing it.
-    /// `runtime` is scratch: it is reset to what a fresh one holds before
-    /// anything reads it, so what the caller passes decides only which
-    /// allocation the scan uses. Passed in because one scan sizes its state to
-    /// the WHOLE graph while reading one edge's ancestors, and a composition
-    /// that stages a wrapper per unit would otherwise stand up a new one of
-    /// those per unit against a graph that grew with every unit before it.
+    /// `runtime` and `scratch` are both scratch: each is reset to what a fresh
+    /// one holds before anything reads it, so what the caller passes decides
+    /// only which allocation the scan uses. Passed in because one scan sizes
+    /// its state to the WHOLE graph while reading one edge's ancestors, and a
+    /// composition that stages a wrapper per unit would otherwise stand up a
+    /// new one of those per unit against a graph that grew with every unit
+    /// before it.
     pub(crate) fn edge_dirty_with<F>(
         &self,
         edge: Edge,
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
         runtime: &mut RuntimeState,
+        scratch: &mut TraversalScratch,
     ) -> Result<bool, crate::error::GraphError>
     where
         F: FnMut(&std::path::Path) -> std::io::Result<i64>,
@@ -782,8 +784,9 @@ impl BuildGraph {
         recompute_dirty_with_validations(
             &self.arenas,
             runtime,
-            &mut TraversalScratch::default(),
+            scratch,
             std::slice::from_ref(&target),
+            None,
             stat,
         )?;
         Ok(runtime.node(target).dirty())

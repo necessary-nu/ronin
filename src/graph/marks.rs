@@ -45,6 +45,17 @@ impl MarkSet {
         self.stamps[index] = self.generation;
         seen
     }
+
+    /// Whether `index` was marked this generation, leaving the marks alone.
+    ///
+    /// An index past the marked range was never marked, which is what lets a
+    /// set collected over one graph be read against a graph that has since
+    /// grown.
+    pub(crate) fn contains(&self, index: usize) -> bool {
+        self.stamps
+            .get(index)
+            .is_some_and(|stamp| *stamp == self.generation)
+    }
 }
 
 impl VisitState {
