@@ -40,7 +40,7 @@ fn mark_dirty(graph: &Graph, paths: &[&str]) -> RuntimeState {
     let mut runtime = RuntimeState::new(graph);
     for path in paths {
         let node = nodeget(graph, path.as_bytes()).unwrap();
-        runtime.node_mut(node).set_dirty(true);
+        runtime.flags_mut(node).set_dirty(true);
     }
     runtime
 }
@@ -259,7 +259,7 @@ fn assert_phony_use_case(case: usize) {
                 builder.runtime.node(phony).mtime(),
                 builder.runtime.node(blank).mtime()
             );
-            assert!(!builder.runtime.node(phony).dirty());
+            assert!(!builder.runtime.flags(phony).dirty());
         }
     }
     fs::remove_dir_all(directory).unwrap();
@@ -442,7 +442,7 @@ fn plan_names_the_pruned_command_edges() {
     let edge = plan.find_work(&graph).unwrap();
     assert_eq!(output_path(&graph, edge), "mid");
     let out = nodeget(&graph, b"out").unwrap();
-    runtime.node_mut(out).set_dirty(false);
+    runtime.flags_mut(out).set_dirty(false);
     let pruned = plan
         .edge_finished(&graph, &runtime, edge, EdgeResult::Succeeded)
         .unwrap();
@@ -755,7 +755,7 @@ fn ronin_plan_handles_deep_graphs_without_recursion() {
     let mut runtime = RuntimeState::new(&graph);
     for node in graph.node_ids() {
         if graph.node(node).generator.is_some() {
-            runtime.node_mut(node).set_dirty(true);
+            runtime.flags_mut(node).set_dirty(true);
         }
     }
     let mut plan = Plan::default();
@@ -3289,7 +3289,7 @@ fn ninja_build_generated_dyndep() {
             directory.join("dd").to_string_lossy().as_bytes(),
         )
         .unwrap();
-        assert!(!builder.runtime.node(dyndep).dyndep_pending());
+        assert!(!builder.runtime.flags(dyndep).dyndep_pending());
     }
     assert!(directory.join("dd").exists());
     assert!(directory.join("out").exists());

@@ -118,10 +118,19 @@ pub(crate) struct NodeRuntime {
     mtime: FileTime,
     log_mtime: FileTime,
     logged_command_hash: CommandHash,
-    dirty: bool,
-    dyndep_pending: bool,
-    absent_on_disk: bool,
 }
+
+/// The answers a graph walk asks of a name, held apart from the dates.
+///
+/// [`crate::graph`]'s descent through the prerequisites reads one of these per
+/// prerequisite and reads nothing else about it, and a no-op over a composed
+/// Linux kernel reads 1.1 billion of them. Among the dates they would be
+/// thirty-two bytes apart and the graph's worth of them would be 1.6 MB, which
+/// is larger than the cache that walk runs out of and is re-read in a
+/// different order on every one of its several thousand passes. Here they are
+/// one byte apart and the whole graph's worth is fifty kilobytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NodeFlags(u8);
 
 /// Which of a searched-for node's two names the build has settled on.
 ///
@@ -152,9 +161,6 @@ impl Default for NodeRuntime {
             mtime: FileTime::UNOBSERVED,
             log_mtime: FileTime::UNOBSERVED,
             logged_command_hash: CommandHash::MISSING,
-            dirty: false,
-            dyndep_pending: false,
-            absent_on_disk: false,
         }
     }
 }
@@ -183,42 +189,71 @@ impl NodeRuntime {
     pub(crate) const fn set_logged_command_hash(&mut self, hash: CommandHash) {
         self.logged_command_hash = hash;
     }
+}
+
+impl NodeFlags {
+    const DIRTY: u8 = 1 << 0;
+    const DYNDEP_PENDING: u8 = 1 << 1;
+    const ABSENT_ON_DISK: u8 = 1 << 2;
+    const INTERMEDIATE_PENDING: u8 = 1 << 3;
+
+    const fn set(&mut self, flag: u8, value: bool) {
+        if value {
+            self.0 |= flag;
+        } else {
+            self.0 &= !flag;
+        }
+    }
 
     pub(crate) const fn dirty(self) -> bool {
-        self.dirty
+        self.0 & Self::DIRTY != 0
     }
 
     pub(crate) const fn set_dirty(&mut self, dirty: bool) {
-        self.dirty = dirty;
-    }
-
-    /// Record what the filesystem answered for this name.
-    ///
-    /// The only way [`Self::absent_on_disk`] is written, which is what makes it
-    /// mean the syscall rather than the scan: every other mtime a node acquires
-    /// stands in for something and would spoil the answer.
-    pub(crate) const fn observe(&mut self, mtime: FileTime) {
-        self.mtime = mtime;
-        self.absent_on_disk = mtime.is_missing();
+        self.set(Self::DIRTY, dirty);
     }
 
     /// Whether the last look at the filesystem found nothing under this name.
     ///
-    /// Kept apart from [`Self::mtime`] because the scan writes over that one: a
-    /// file the graph is allowed not to have stands in the newest timestamp
-    /// behind it, and a phony output stands in its inputs'. What was actually
-    /// there is still the question GNU Make asks to decide a target must be
-    /// made, so it is recorded where the syscall answers it and nowhere else.
+    /// Kept apart from [`NodeRuntime::mtime`] because the scan writes over that
+    /// one: a file the graph is allowed not to have stands in the newest
+    /// timestamp behind it, and a phony output stands in its inputs'. What was
+    /// actually there is still the question GNU Make asks to decide a target
+    /// must be made, so it is recorded where the syscall answers it and nowhere
+    /// else — [`RuntimeState::observe`] is the only writer.
     pub(crate) const fn absent_on_disk(self) -> bool {
-        self.absent_on_disk
+        self.0 & Self::ABSENT_ON_DISK != 0
     }
 
     pub(crate) const fn dyndep_pending(self) -> bool {
-        self.dyndep_pending
+        self.0 & Self::DYNDEP_PENDING != 0
     }
 
     pub(crate) const fn set_dyndep_pending(&mut self, pending: bool) {
-        self.dyndep_pending = pending;
+        self.set(Self::DYNDEP_PENDING, pending);
+    }
+
+    /// Whether the intermediate file this name stands for has work of its own
+    /// left to do.
+    ///
+    /// The answer the scan reached about the file and then declined to pass on.
+    /// `check_dep` (remake.c) asks an intermediate whether it is NEWER than the
+    /// file being checked, never whether it is out of date, so an intermediate
+    /// that is merely stale leaves its dependent alone — and only once the
+    /// dependent has to be made for some other reason does `update_file_1`'s
+    /// second loop come back and update it. This is what that second loop reads.
+    ///
+    /// It is an answer about the file rather than about the edge that makes it,
+    /// so it is held on the name, beside the two other reasons a walk descends
+    /// past a prerequisite. That is what keeps [`crate::graph`]'s descent to a
+    /// single load per prerequisite: the generating edge is reached only for
+    /// the prerequisite whose byte says one of the three is true.
+    pub(crate) const fn intermediate_pending(self) -> bool {
+        self.0 & Self::INTERMEDIATE_PENDING != 0
+    }
+
+    pub(crate) const fn set_intermediate_pending(&mut self, pending: bool) {
+        self.set(Self::INTERMEDIATE_PENDING, pending);
     }
 }
 
@@ -226,6 +261,7 @@ impl NodeRuntime {
 #[derive(Default)]
 pub(crate) struct RuntimeState {
     nodes: Vec<NodeRuntime>,
+    node_flags: Vec<NodeFlags>,
     edges: Vec<EdgeRuntime>,
     deferred: crate::htab::RapidHashMap<EdgeId, DeferredRuntime>,
     /// Whether this scan is answering GNU Make's `-B`: every edge that has a
@@ -305,6 +341,9 @@ impl RuntimeState {
         self.nodes
             .resize(graph.node_ids().len(), NodeRuntime::default());
         self.nodes.fill(NodeRuntime::default());
+        self.node_flags
+            .resize(graph.node_ids().len(), NodeFlags::default());
+        self.node_flags.fill(NodeFlags::default());
         self.edges
             .resize(graph.edge_count(), EdgeRuntime::default());
         self.edges.fill(EdgeRuntime::default());
@@ -318,7 +357,7 @@ impl RuntimeState {
         // arena for them.
         for edge in graph.dyndep_edges() {
             if let Some(dyndep) = graph.edge(*edge).dyndep {
-                self.node_mut(dyndep).set_dyndep_pending(true);
+                self.flags_mut(dyndep).set_dyndep_pending(true);
             }
         }
     }
@@ -328,11 +367,13 @@ impl RuntimeState {
         let old_edge_count = self.edges.len();
         self.nodes
             .resize(graph.node_ids().len(), NodeRuntime::default());
+        self.node_flags
+            .resize(graph.node_ids().len(), NodeFlags::default());
         self.edges
             .resize(graph.edge_count(), EdgeRuntime::default());
         for edge in graph.edge_ids().skip(old_edge_count) {
             if let Some(dyndep) = graph.edge(edge).dyndep {
-                self.node_mut(dyndep).set_dyndep_pending(true);
+                self.flags_mut(dyndep).set_dyndep_pending(true);
             }
         }
         old_node_count..self.nodes.len()
@@ -344,6 +385,26 @@ impl RuntimeState {
 
     pub(crate) fn node_mut(&mut self, node: NodeId) -> &mut NodeRuntime {
         &mut self.nodes[node.index()]
+    }
+
+    pub(crate) fn flags(&self, node: NodeId) -> NodeFlags {
+        self.node_flags[node.index()]
+    }
+
+    pub(crate) fn flags_mut(&mut self, node: NodeId) -> &mut NodeFlags {
+        &mut self.node_flags[node.index()]
+    }
+
+    /// Record what the filesystem answered for this name.
+    ///
+    /// The only way [`NodeFlags::absent_on_disk`] is written, which is what
+    /// makes it mean the syscall rather than the scan: every other mtime a node
+    /// acquires stands in for something and would spoil the answer. It is here
+    /// rather than on either half because it is the one write that touches
+    /// both.
+    pub(crate) fn observe(&mut self, node: NodeId, mtime: FileTime) {
+        self.nodes[node.index()].set_mtime(mtime);
+        self.node_flags[node.index()].set(NodeFlags::ABSENT_ON_DISK, mtime.is_missing());
     }
 
     pub(crate) fn edge(&self, edge: EdgeId) -> EdgeRuntime {
@@ -370,6 +431,58 @@ mod tests {
     use crate::graph::{mkedge, mknode};
     use crate::util::BString;
 
+    /// Every flag is its own bit, and the walk reads three of them off one
+    /// byte, so setting one must not disturb another and clearing one must
+    /// leave the rest standing. Staleness and absence in particular have to be
+    /// readable apart: an intermediate that is THERE and stale has work
+    /// pending without ever having been absent, because `check_dep` forgives a
+    /// stale intermediate the way it forgives an absent one and only the
+    /// second is a file that has to be invented.
+    #[test]
+    fn each_node_flag_is_independent() {
+        let mut flags = NodeFlags::default();
+        assert!(!flags.dirty());
+        assert!(!flags.dyndep_pending());
+        assert!(!flags.absent_on_disk());
+        assert!(!flags.intermediate_pending());
+
+        flags.set_dirty(true);
+        flags.set_dyndep_pending(true);
+        flags.set(NodeFlags::ABSENT_ON_DISK, true);
+        flags.set_intermediate_pending(true);
+        assert!(flags.dirty());
+        assert!(flags.dyndep_pending());
+        assert!(flags.absent_on_disk());
+        assert!(flags.intermediate_pending());
+
+        flags.set(NodeFlags::ABSENT_ON_DISK, false);
+        assert!(!flags.absent_on_disk());
+        assert!(flags.intermediate_pending());
+        assert!(flags.dirty());
+        assert!(flags.dyndep_pending());
+    }
+
+    /// The absence answer means the syscall and not the scan, which is why the
+    /// one write that touches both halves is the only way it is written: a
+    /// date arriving any other way stands in for something else.
+    #[test]
+    fn only_a_disk_look_says_absent() {
+        let mut graph = Graph::default();
+        let node = mknode(&mut graph, BString::from("out"));
+        let mut runtime = RuntimeState::new(&graph);
+
+        runtime.observe(node, FileTime::MISSING);
+        assert!(runtime.flags(node).absent_on_disk());
+
+        // A date the scan wrote is not an answer about the disk.
+        runtime.node_mut(node).set_mtime(FileTime::observed(7));
+        assert!(runtime.flags(node).absent_on_disk());
+
+        runtime.observe(node, FileTime::observed(7));
+        assert!(!runtime.flags(node).absent_on_disk());
+        assert_eq!(runtime.node(node).mtime(), FileTime::observed(7));
+    }
+
     // [spec:ronin:req:runtime.typed-runtime-state/test]
     #[test]
     fn runtime_reset_clears_transient_state_without_mutating_the_graph() {
@@ -386,7 +499,7 @@ mod tests {
 
         let mut runtime = RuntimeState::new(&graph);
         runtime.node_mut(output).set_mtime(FileTime::observed(42));
-        runtime.node_mut(output).set_dirty(true);
+        runtime.flags_mut(output).set_dirty(true);
         runtime.edge_mut(edge).set_deps_loaded(true);
         runtime.edge_mut(edge).set_command_dirty(true);
         runtime.edge_mut(edge).set_restat_clean(true);
@@ -395,8 +508,8 @@ mod tests {
         assert_eq!(graph.node_ids().len(), node_count);
         assert_eq!(graph.edge_count(), edge_count);
         assert!(runtime.node(output).mtime().is_unobserved());
-        assert!(!runtime.node(output).dirty());
-        assert!(runtime.node(dyndep).dyndep_pending());
+        assert!(!runtime.flags(output).dirty());
+        assert!(runtime.flags(dyndep).dyndep_pending());
         assert!(!runtime.edge(edge).deps_loaded());
         assert!(!runtime.edge(edge).command_dirty());
         assert!(!runtime.edge(edge).restat_clean());

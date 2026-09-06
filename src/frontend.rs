@@ -816,7 +816,7 @@ impl BuildGraph {
         while let Some(node) = work.pop() {
             // A node the build would leave alone reaches nothing: what stands
             // behind a clean output is work the build has no cause to enter.
-            if !runtime.node(node).dirty() {
+            if !runtime.flags(node).dirty() {
                 continue;
             }
             let Some(edge) = self.arenas.node(node).generator else {
@@ -840,7 +840,7 @@ impl BuildGraph {
             );
         }
         Ok(StagedFreshness {
-            dirty: runtime.node(target).dirty(),
+            dirty: runtime.flags(target).dirty(),
             staged_runs_nothing: runs_nothing,
         })
     }

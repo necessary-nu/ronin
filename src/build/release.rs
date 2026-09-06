@@ -137,7 +137,7 @@ impl Plan {
             .edge(dependent)
             .out
             .iter()
-            .any(|output| runtime.node(*output).dirty());
+            .any(|output| runtime.flags(*output).dirty());
         if dirty {
             self.ready
                 .push(ReadyEdge::new(self.priority(dependent), dependent));

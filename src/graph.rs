@@ -499,7 +499,7 @@ where
     // about them, and because there is no syscall to make for a name the
     // invocation has already answered about.
     if runtime.assumed_new.contains(node) {
-        runtime.node_mut(node).observe(FileTime::NEWEST);
+        runtime.observe(node, FileTime::NEWEST);
         return Ok(());
     }
     // `-o` is the same stamp with the sign turned round, and it is asked after
@@ -507,11 +507,11 @@ where
     // (main.c:2312) and `NEW_MTIME` goes over it (main.c:2325), so a name given
     // to both switches is new however the words were ordered.
     if runtime.assumed_old.contains(node) {
-        runtime.node_mut(node).observe(FileTime::OLDEST);
+        runtime.observe(node, FileTime::OLDEST);
         return Ok(());
     }
     if graph.is_unread_makefile(node) {
-        runtime.node_mut(node).observe(FileTime::MISSING);
+        runtime.observe(node, FileTime::MISSING);
         return Ok(());
     }
     // Borrow the interned path for the syscall; only the error path needs an
@@ -525,7 +525,7 @@ where
         }
     })?;
     let mtime = elsewhere_mtime(graph, node, mtime, stat)?;
-    runtime.node_mut(node).observe(FileTime::observed(mtime));
+    runtime.observe(node, FileTime::observed(mtime));
     Ok(())
 }
 
@@ -586,7 +586,7 @@ where
     }
     if runtime.edge(edge).restat_clean() {
         for output in &graph.edge(edge).out {
-            runtime.node_mut(*output).set_dirty(false);
+            runtime.flags_mut(*output).set_dirty(false);
         }
         return Ok(false);
     }
@@ -605,16 +605,15 @@ where
     let mut input_dirty = false;
     let mut newest_input = FileTime::MISSING;
     for input in edge_data.non_order_only_inputs() {
-        let input = runtime.node(*input);
-        input_dirty |= input.dirty();
-        newest_input = newest_input.max(input.mtime());
+        input_dirty |= runtime.flags(*input).dirty();
+        newest_input = newest_input.max(runtime.node(*input).mtime());
     }
 
     let absent_intermediate = record_absent_intermediate(graph, runtime, edge, peers);
     let edge_data = graph.edge(edge);
 
     let out_of_date = if absent_intermediate {
-        stand_in_for_an_intermediate(runtime, edge, &edge_data.out, newest_input, true);
+        stand_in_for_an_intermediate(runtime, &edge_data.out, newest_input, true);
         input_dirty
     } else if graph.is_phony_rule(edge_data.rule) && !edge_data.outputs_unaliased {
         // An alias stands in for an output it does not have, and is out of date
@@ -660,7 +659,7 @@ where
             || oldest_recorded_output.is_some_and(|output_mtime| newest_input > output_mtime)
             || newest_input > oldest_output;
         if edge_data.intermediate {
-            stand_in_for_an_intermediate(runtime, edge, &edge_data.out, newest_input, comparison);
+            stand_in_for_an_intermediate(runtime, &edge_data.out, newest_input, comparison);
             input_dirty
         } else {
             comparison
@@ -704,7 +703,7 @@ where
         || out_of_date;
 
     for output in &graph.edge(edge).out {
-        runtime.node_mut(*output).set_dirty(dirty);
+        runtime.flags_mut(*output).set_dirty(dirty);
     }
     settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)
@@ -798,9 +797,9 @@ impl DirtyEvaluator {
                         // edge dirty and remake the very name the switch named.
                         if runtime.assumed_old.contains(node) {
                             if runtime.node(node).mtime().is_unobserved() {
-                                runtime.node_mut(node).observe(FileTime::OLDEST);
+                                runtime.observe(node, FileTime::OLDEST);
                             }
-                            runtime.node_mut(node).set_dirty(false);
+                            runtime.flags_mut(node).set_dirty(false);
                             self.nodes.set(node.index(), VisitState::Done);
                             continue;
                         }
@@ -809,7 +808,7 @@ impl DirtyEvaluator {
                                 nodestat_with(graph, runtime, node, stat)?;
                             }
                             let dirty = runtime.node(node).mtime().is_missing();
-                            runtime.node_mut(node).set_dirty(dirty);
+                            runtime.flags_mut(node).set_dirty(dirty);
                             self.nodes.set(node.index(), VisitState::Done);
                             continue;
                         };
@@ -835,7 +834,7 @@ impl DirtyEvaluator {
                         let outputs: &[NodeId] = &graph.edge(edge).out;
                         if runtime.edge(edge).restat_clean() {
                             for &output in outputs {
-                                runtime.node_mut(output).set_dirty(false);
+                                runtime.flags_mut(output).set_dirty(false);
                                 self.nodes.set(output.index(), VisitState::Done);
                             }
                             self.edges.set(edge.index(), VisitState::Done);
@@ -846,8 +845,15 @@ impl DirtyEvaluator {
                             capture_deferred_freshness(graph, runtime, edge, stat)?;
                         }
                         for &output in outputs {
-                            if !graph.is_virtual_output(output)
-                                && runtime.node(output).mtime().is_unobserved()
+                            // Whether the name has been looked at is asked
+                            // first because it is a load, where asking whether
+                            // it is a name at all is three lookups in the
+                            // tables that hold the front end's inventions.
+                            // Both questions are of state neither of them
+                            // moves, so the order is the answer's cost and not
+                            // the answer.
+                            if runtime.node(output).mtime().is_unobserved()
+                                && !graph.is_virtual_output(output)
                             {
                                 nodestat_with(graph, runtime, output, stat)?;
                             }
@@ -875,7 +881,7 @@ impl DirtyEvaluator {
         self.work = work;
         self.path = path;
         self.push_intermediates(graph, runtime, target);
-        Ok(runtime.node(target).dirty())
+        Ok(runtime.flags(target).dirty())
     }
 }
 
@@ -1395,8 +1401,8 @@ mod tests {
         let mut stats = Vec::new();
         let runtime = scan_graph(&graph, output, &[], &mut stats).unwrap();
         assert_eq!(stats, ["out", "mid", "in"]);
-        assert!(runtime.node(output).dirty());
-        assert!(runtime.node(middle).dirty());
+        assert!(runtime.flags(output).dirty());
+        assert!(runtime.flags(middle).dirty());
     }
 
     #[test]
@@ -1412,7 +1418,7 @@ mod tests {
             stats,
             ["out", "mid1", "in11", "in12", "mid2", "in21", "in22"]
         );
-        assert!(runtime.node(middle1).dirty());
+        assert!(runtime.flags(middle1).dirty());
     }
 
     #[test]
@@ -1455,9 +1461,9 @@ mod tests {
             &mut stats,
         )
         .unwrap();
-        assert!(!runtime.node(input).dirty());
-        assert!(runtime.node(middle).dirty());
-        assert!(runtime.node(output).dirty());
+        assert!(!runtime.flags(input).dirty());
+        assert!(runtime.flags(middle).dirty());
+        assert!(runtime.flags(output).dirty());
     }
 
     #[test]
@@ -1723,8 +1729,8 @@ mod tests {
         let (dirty, runtime) =
             recompute_state_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1)]).unwrap();
         assert!(dirty);
-        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
-        assert!(runtime.node(nodeget(&graph, b"out.imp").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"out.imp").unwrap()).dirty());
     }
 
     #[test]
@@ -1734,8 +1740,8 @@ mod tests {
             recompute_state_with_mtimes(&graph, b"out", &[("out.imp", 1), ("in", 2), ("out", 2)])
                 .unwrap();
         assert!(dirty);
-        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
-        assert!(runtime.node(nodeget(&graph, b"out.imp").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"out.imp").unwrap()).dirty());
     }
 
     #[test]
@@ -1770,8 +1776,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(validations.len(), 1);
-        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
-        assert!(runtime.node(nodeget(&graph, b"validate").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.flags(nodeget(&graph, b"validate").unwrap()).dirty());
     }
 
     #[test]
@@ -1810,7 +1816,7 @@ mod tests {
             .node_mut(output)
             .set_log_mtime(FileTime::observed(2));
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
-        assert!(runtime.node(output).dirty());
+        assert!(runtime.flags(output).dirty());
     }
 
     /// The two senses of phony are independent: an alias for its inputs can
@@ -1829,7 +1835,7 @@ mod tests {
         let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
         let mut runtime = RuntimeState::new(&graph);
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
-        assert!(runtime.node(alias_output).dirty());
+        assert!(runtime.flags(alias_output).dirty());
         assert_eq!(runtime.node(alias_output).mtime(), FileTime::observed(1));
     }
 
@@ -1857,9 +1863,9 @@ mod tests {
         graph.edge_mut(empty_recipe).outputs_unaliased = true;
         let mut runtime = RuntimeState::new(&graph);
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
-        assert!(runtime.node(middle).dirty());
+        assert!(runtime.flags(middle).dirty());
         assert_eq!(runtime.node(middle).mtime(), FileTime::MISSING);
-        assert!(!runtime.node(aliased).dirty());
+        assert!(!runtime.flags(aliased).dirty());
         assert_eq!(runtime.node(aliased).mtime(), FileTime::observed(1));
     }
 
@@ -1925,7 +1931,7 @@ mod tests {
 
         // What the build left behind: the edge ran and the target is here, and
         // the run re-observes it exactly as `outputs_reobserved` says.
-        runtime.node_mut(output).observe(FileTime::observed(4));
+        runtime.observe(output, FileTime::observed(4));
         let made = BTreeMap::from([("out.c".to_owned(), 3), ("out.o".to_owned(), 4)]);
         let mut stat = |path: &Path| Ok(*made.get(&*path.to_string_lossy()).unwrap_or(&0));
         assert!(!recompute_edge_dirty_with(&graph, &mut runtime, edge, &mut stat).unwrap());
@@ -1958,13 +1964,13 @@ mod tests {
         // Read plainly, `mid` is older than the thing it is a copy of.
         let mut runtime = RuntimeState::new(&graph);
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
-        assert!(runtime.node(middle).dirty());
+        assert!(runtime.flags(middle).dirty());
 
         graph.edge_mut(producer).outputs_low_resolution = true;
         let mut runtime = RuntimeState::new(&graph);
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
         assert!(
-            !runtime.node(middle).dirty(),
+            !runtime.flags(middle).dirty(),
             "the round-up applies where the file is the one being made"
         );
         assert_eq!(
@@ -1999,13 +2005,13 @@ mod tests {
         // `mid` stands in for `src` rather than for a missing file.
         let (dirty, runtime) = settled([("src", 1), ("out", 2)]);
         assert!(!dirty);
-        assert!(!runtime.node(middle).dirty());
+        assert!(!runtime.flags(middle).dirty());
         assert_eq!(runtime.node(middle).mtime(), FileTime::observed(1));
 
         // `src` moved ahead of `out`, so `out` has to run and now needs it.
         let (dirty, runtime) = settled([("src", 3), ("out", 2)]);
         assert!(dirty);
-        assert!(runtime.node(middle).dirty());
+        assert!(runtime.flags(middle).dirty());
     }
 
     #[test]
@@ -2023,7 +2029,7 @@ mod tests {
             &mut stat,
         )
         .unwrap();
-        assert!(!runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(!runtime.flags(nodeget(&graph, b"out").unwrap()).dirty());
         assert_eq!(validations.len(), 1);
         assert_eq!(graph.node_path(validations[0]).as_bytes(), b"valid");
     }

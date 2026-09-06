@@ -398,7 +398,7 @@ impl Plan {
             // from a node identity carried out of the failure.
             let unmade = graph.is_unmade_makefile(node) || graph.is_questioned_makefile(node);
             let Some(edge) = graph.node(node).generator.filter(|_| !unmade) else {
-                if unmade || runtime.node(node).dirty() {
+                if unmade || runtime.flags(node).dirty() {
                     let path = graph.node_path(node).to_owned();
                     let needed_by = needed_by
                         .map(|needed_by| (needed_by, graph.node_path(needed_by).to_owned()));
@@ -415,7 +415,7 @@ impl Plan {
                 .edge(edge)
                 .out
                 .iter()
-                .any(|output| runtime.node(*output).dirty());
+                .any(|output| runtime.flags(*output).dirty());
             let phony_with_no_inputs = {
                 let edge = graph.edge(edge);
                 graph.is_phony_rule(edge.rule) && edge.input.is_empty()
@@ -707,6 +707,15 @@ pub(crate) struct Builder<'a> {
     /// Nodes awaiting an mtime, reused across targets by `prefetch_mtimes`.
     stat_targets: Vec<NodeId>,
     visited_edges: crate::graph::MarkSet,
+    /// The consumer walk's two lists, held for the build so the walk itself
+    /// allocates nothing.
+    ///
+    /// Every `restat` that prunes runs that walk, and a composed kernel build
+    /// runs it 7,413 times over 9.4 million consumers between them, growing
+    /// both lists to thousands of entries each time. Locals here would be a
+    /// malloc, several reallocations and a free on every one of those.
+    restat_queue: Vec<EdgeId>,
+    restat_consumers: Vec<NodeId>,
     build_log: Option<&'a mut crate::log::BuildLog>,
     deps_log: Option<&'a mut crate::deps::DepsLog>,
     targets: Vec<NodeId>,
@@ -799,6 +808,8 @@ impl<'a> Builder<'a> {
             scratch: TraversalScratch::default(),
             stat_targets: Vec::new(),
             visited_edges: crate::graph::MarkSet::default(),
+            restat_queue: Vec::new(),
+            restat_consumers: Vec::new(),
             build_log,
             deps_log,
             targets: Vec::new(),
@@ -910,7 +921,7 @@ impl<'a> Builder<'a> {
                             nodestat_with(self.graph, &mut self.runtime, node, &mut stat)?;
                         }
                         let dirty = self.runtime.node(node).mtime().is_missing();
-                        self.runtime.node_mut(node).set_dirty(dirty);
+                        self.runtime.flags_mut(node).set_dirty(dirty);
                         continue;
                     };
                     if self.visited_edges.replace(edge.index()) {
@@ -1022,7 +1033,7 @@ impl<'a> Builder<'a> {
             }
             let dyndep = self.graph.edge(edge).dyndep;
             if let Some(dyndep) =
-                dyndep.filter(|dyndep| self.runtime.node(*dyndep).dyndep_pending())
+                dyndep.filter(|dyndep| self.runtime.flags(*dyndep).dyndep_pending())
             {
                 loaded_files.resize(loaded_files.len().max(dyndep.index() + 1), false);
                 let path = self.graph.node_path(dyndep).to_owned();
@@ -1082,7 +1093,7 @@ impl<'a> Builder<'a> {
                 .copied();
             for output in &self.graph.edge(edge).out {
                 let output_state = self.runtime.node(*output);
-                if !output_state.dirty() {
+                if !self.runtime.flags(*output).dirty() {
                     continue;
                 }
                 let path = self.graph.node_path(*output).to_str_lossy();
@@ -1101,7 +1112,10 @@ impl<'a> Builder<'a> {
                         output_state.mtime().raw(),
                         self.runtime.node(input).mtime().raw()
                     )
-                } else if inputs.iter().any(|input| self.runtime.node(*input).dirty()) {
+                } else if inputs
+                    .iter()
+                    .any(|input| self.runtime.flags(*input).dirty())
+                {
                     format!("input to {path} is dirty")
                 } else {
                     format!("output {path} is dirty")
@@ -1233,7 +1247,7 @@ impl<'a> Builder<'a> {
                 } else {
                     FileTime::observed(mtime)
                 };
-                self.runtime.node_mut(*node).observe(observed);
+                self.runtime.observe(*node, observed);
             }
         }
     }
@@ -1779,17 +1793,15 @@ impl<'a> Builder<'a> {
                             source,
                         )
                     })?;
-                self.runtime
-                    .node_mut(*output)
-                    .observe(FileTime::observed(mtime));
+                self.runtime.observe(*output, FileTime::observed(mtime));
                 logical_mtime = logical_mtime.max(FileTime::observed(mtime));
                 new_mtimes.push(mtime);
             }
             for output in &self.graph.edge(edge).out {
-                let output = self.runtime.node_mut(*output);
-                output.set_mtime(logical_mtime);
-                output.set_dirty(false);
-                output.set_logged_command_hash(edge_hash);
+                let state = self.runtime.node_mut(*output);
+                state.set_mtime(logical_mtime);
+                state.set_logged_command_hash(edge_hash);
+                self.runtime.flags_mut(*output).set_dirty(false);
             }
         } else {
             let output_ids = self.graph.edge(edge).out.clone();
@@ -1805,10 +1817,11 @@ impl<'a> Builder<'a> {
                             source,
                         )
                     })?;
-                let output = self.runtime.node_mut(output);
-                output.observe(FileTime::observed(mtime));
-                output.set_dirty(false);
-                output.set_logged_command_hash(edge_hash);
+                self.runtime.observe(output, FileTime::observed(mtime));
+                self.runtime
+                    .node_mut(output)
+                    .set_logged_command_hash(edge_hash);
+                self.runtime.flags_mut(output).set_dirty(false);
                 new_mtimes.push(mtime);
             }
         }
@@ -1857,7 +1870,7 @@ impl<'a> Builder<'a> {
                 .edge(edge)
                 .out
                 .iter()
-                .filter(|output| self.runtime.node(**output).dyndep_pending())
+                .filter(|output| self.runtime.flags(**output).dyndep_pending())
                 .copied()
                 .collect::<Vec<_>>();
             for dyndep in generated_dyndeps {
@@ -1873,7 +1886,11 @@ impl<'a> Builder<'a> {
         // not substitute over it. The work the scan was holding for it is done
         // with the same breath, so nothing can come back and ask for it again.
         self.runtime.edge_mut(edge).set_absent_intermediate(false);
-        self.runtime.edge_mut(edge).set_intermediate_pending(false);
+        for &output in &self.graph.edge(edge).out {
+            self.runtime
+                .flags_mut(output)
+                .set_intermediate_pending(false);
+        }
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)
@@ -1976,11 +1993,11 @@ impl<'a> Builder<'a> {
                     .stat(path.to_path().expect("byte paths are valid on Unix"))
                     .map_or(FileTime::MISSING, FileTime::observed);
                 every_output_made &= !mtime.is_missing();
-                self.runtime.node_mut(output).observe(mtime);
+                self.runtime.observe(output, mtime);
             }
         }
         for &output in &outputs {
-            self.runtime.node_mut(output).set_dirty(false);
+            self.runtime.flags_mut(output).set_dirty(false);
         }
         // A target the recipe left absent is what GNU Make reads as infinitely
         // new, so nothing that waited for it is settled by this.
@@ -2004,22 +2021,26 @@ impl<'a> Builder<'a> {
     /// of the graph's 50,346 edges on each of 7,413 restats — 314 million
     /// recomputations to reach 9.4 million consumers.
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
-        let mut queue = Vec::new();
+        self.restat_queue.clear();
+        self.restat_consumers.clear();
         for output in &self.graph.edge(edge).out {
-            queue.extend(self.graph.node(*output).uses.iter().copied());
-            queue.extend(self.graph.node_validation_uses(*output).iter().copied());
+            self.restat_queue
+                .extend(self.graph.node(*output).uses.iter().copied());
+            self.restat_queue
+                .extend(self.graph.node_validation_uses(*output).iter().copied());
         }
         self.visited_edges.begin(self.graph.edge_count());
-        let mut consumers = Vec::new();
-        while let Some(dependent) = queue.pop() {
+        while let Some(dependent) = self.restat_queue.pop() {
             if self.visited_edges.replace(dependent.index()) {
                 continue;
             }
             let outputs: &[NodeId] = &self.graph.edge(dependent).out;
-            consumers.extend_from_slice(outputs);
+            self.restat_consumers.extend_from_slice(outputs);
             for &output in outputs {
-                queue.extend(self.graph.node(output).uses.iter().copied());
-                queue.extend(self.graph.node_validation_uses(output).iter().copied());
+                self.restat_queue
+                    .extend(self.graph.node(output).uses.iter().copied());
+                self.restat_queue
+                    .extend(self.graph.node_validation_uses(output).iter().copied());
             }
         }
         let disk = self.disk.clone();
@@ -2028,7 +2049,7 @@ impl<'a> Builder<'a> {
             self.graph,
             &mut self.runtime,
             &mut self.scratch,
-            &consumers,
+            &self.restat_consumers,
             Some(&Reconsidered::new(&self.visited_edges)),
             &mut stat,
         )?;

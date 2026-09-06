@@ -516,9 +516,8 @@ impl Builder<'_> {
             logical_mtime = logical_mtime.max(self.runtime.node(output).mtime());
         }
         for output in &self.graph.edge(edge).out {
-            let state = self.runtime.node_mut(*output);
-            state.set_mtime(logical_mtime);
-            state.set_dirty(false);
+            self.runtime.node_mut(*output).set_mtime(logical_mtime);
+            self.runtime.flags_mut(*output).set_dirty(false);
         }
         if deferred {
             self.runtime.deferred_mut(edge).settle();

@@ -845,7 +845,7 @@ mod ninja_manifest_tests {
         let dyndep = graph.edge(edge).dyndep.unwrap();
         assert_eq!(graph.node_path(dyndep).as_bytes(), expected);
         let runtime = crate::runtime::RuntimeState::new(&graph);
-        assert!(runtime.node(dyndep).dyndep_pending());
+        assert!(runtime.flags(dyndep).dyndep_pending());
     }
 
     #[test]

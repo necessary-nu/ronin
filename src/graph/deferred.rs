@@ -263,13 +263,13 @@ where
         .settled()
     {
         for output in &graph.edge(edge).out {
-            runtime.node_mut(*output).set_dirty(false);
+            runtime.flags_mut(*output).set_dirty(false);
         }
         return Ok(false);
     }
     if runtime.edge(edge).restat_clean() {
         for output in &graph.edge(edge).out {
-            runtime.node_mut(*output).set_dirty(false);
+            runtime.flags_mut(*output).set_dirty(false);
         }
         return Ok(false);
     }
@@ -327,7 +327,7 @@ where
         && edge_data
             .non_order_only_inputs()
             .iter()
-            .any(|input| runtime.node(*input).dirty())
+            .any(|input| runtime.flags(*input).dirty())
     {
         runtime.deferred_mut(edge).note_deps_changed();
     }
@@ -339,12 +339,12 @@ where
             .deps_changed()
             || edge_data.input[edge_data.non_order_only_input_count()..]
                 .iter()
-                .any(|input| graph.is_virtual_output(*input) && runtime.node(*input).dirty())
+                .any(|input| graph.is_virtual_output(*input) && runtime.flags(*input).dirty())
     } else {
         edge_data
             .input
             .iter()
-            .any(|input| runtime.node(*input).dirty())
+            .any(|input| runtime.flags(*input).dirty())
     };
     let dirty = semantic_dirty || dependency_dirty;
     if !runtime
@@ -357,9 +357,8 @@ where
             .decide_initial(semantic_dirty, dirty && !semantic_dirty);
     }
     for output in &edge_data.out {
-        let output_state = runtime.node_mut(*output);
-        output_state.set_mtime(baseline);
-        output_state.set_dirty(dirty);
+        runtime.node_mut(*output).set_mtime(baseline);
+        runtime.flags_mut(*output).set_dirty(dirty);
     }
     super::settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)
@@ -385,12 +384,11 @@ where
     let actions_pending = edge_data
         .input
         .iter()
-        .any(|input| runtime.node(*input).dirty());
+        .any(|input| runtime.flags(*input).dirty());
     let dirty = actions_pending || edge_data.always_dirty || observed_mtime.is_missing();
     for output in &edge_data.out {
-        let output = runtime.node_mut(*output);
-        output.set_mtime(observed_mtime);
-        output.set_dirty(dirty);
+        runtime.node_mut(*output).set_mtime(observed_mtime);
+        runtime.flags_mut(*output).set_dirty(dirty);
     }
     super::settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)

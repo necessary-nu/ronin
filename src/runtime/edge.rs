@@ -17,7 +17,6 @@ impl EdgeRuntimeFlags {
     const RESTAT_CLEAN: u8 = 1 << 3;
     const COMMAND_HASH_VALID: u8 = 1 << 4;
     const ABSENT_INTERMEDIATE: u8 = 1 << 5;
-    const INTERMEDIATE_PENDING: u8 = 1 << 6;
 
     const fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
@@ -113,23 +112,6 @@ impl EdgeRuntime {
             .set(EdgeRuntimeFlags::ABSENT_INTERMEDIATE, absent);
     }
 
-    /// Whether this intermediate edge has work of its own left to do.
-    ///
-    /// The answer the scan reached about the edge and then declined to pass on.
-    /// `check_dep` (remake.c) asks an intermediate whether it is NEWER than the
-    /// file being checked, never whether it is out of date, so an intermediate
-    /// that is merely stale leaves its dependent alone — and only once the
-    /// dependent has to be made for some other reason does `update_file_1`'s
-    /// second loop come back and update it. This is what that second loop reads.
-    pub(crate) const fn intermediate_pending(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::INTERMEDIATE_PENDING)
-    }
-
-    pub(crate) const fn set_intermediate_pending(&mut self, pending: bool) {
-        self.flags
-            .set(EdgeRuntimeFlags::INTERMEDIATE_PENDING, pending);
-    }
-
     pub(crate) const fn restat_clean(self) -> bool {
         self.flags.contains(EdgeRuntimeFlags::RESTAT_CLEAN)
     }
@@ -154,40 +136,22 @@ mod tests {
         assert!(!edge.command_dirty());
         assert!(!edge.restat_clean());
         assert!(!edge.absent_intermediate());
-        assert!(!edge.intermediate_pending());
 
         edge.set_deps_loaded(true);
         edge.set_deps_missing(true);
         edge.set_command_dirty(true);
         edge.set_restat_clean(true);
         edge.set_absent_intermediate(true);
-        edge.set_intermediate_pending(true);
         assert!(edge.deps_loaded());
         assert!(edge.deps_missing());
         assert!(edge.command_dirty());
         assert!(edge.restat_clean());
         assert!(edge.absent_intermediate());
-        assert!(edge.intermediate_pending());
 
         edge.set_absent_intermediate(false);
         assert!(!edge.absent_intermediate());
-        assert!(edge.intermediate_pending());
         assert!(edge.deps_loaded());
         assert!(edge.command_dirty());
-    }
-
-    /// An intermediate that is THERE and stale is pending without ever having
-    /// been absent, which is the whole reason the two answers are separate
-    /// bits: `check_dep` forgives a stale intermediate the way it forgives an
-    /// absent one, and only the second is a file that has to be invented.
-    #[test]
-    fn pending_work_needs_no_absence() {
-        let mut edge = EdgeRuntime::default();
-        edge.set_intermediate_pending(true);
-        assert!(edge.intermediate_pending());
-        assert!(!edge.absent_intermediate());
-        edge.set_intermediate_pending(false);
-        assert!(!edge.intermediate_pending());
     }
 
     /// The command hash carries its own validity rather than spending a value

@@ -57,6 +57,15 @@ pub(super) fn record_absent_intermediate(
 /// edge cannot reach the answer again. It is cleared where the absence flag is,
 /// the moment the edge's own command observes real outputs.
 ///
+/// It is held on the outputs rather than on the edge, beside the substituted
+/// date it is the other half of, because that is where the walk that comes
+/// back for it arrives: a prerequisite is a name, and reading the answer off
+/// the name spares that walk the generating edge entirely for every
+/// prerequisite whose answer is no. The edge's several outputs still carry one
+/// answer between them — it is read across them and written back to all of
+/// them — so an output the edge acquires later joins the answer the edge
+/// already had rather than starting a second one.
+///
 /// An intermediate that is NOT there is the same substitution with nothing of
 /// its own to contribute, so it arrives here too: its outputs hold no date, the
 /// later of the two is whatever stands behind them, and a file that is not there
@@ -66,16 +75,18 @@ pub(super) fn record_absent_intermediate(
 /// now has.
 pub(super) fn stand_in_for_an_intermediate(
     runtime: &mut RuntimeState,
-    edge: EdgeId,
     outputs: &[NodeId],
     newest_input: FileTime,
     stale: bool,
 ) {
-    let pending = stale || runtime.edge(edge).intermediate_pending();
-    runtime.edge_mut(edge).set_intermediate_pending(pending);
+    let mut pending = stale;
+    for output in outputs {
+        pending |= runtime.flags(*output).intermediate_pending();
+    }
     for output in outputs {
         let standing_in = runtime.node(*output).mtime().max(newest_input);
         runtime.node_mut(*output).set_mtime(standing_in);
+        runtime.flags_mut(*output).set_intermediate_pending(pending);
     }
 }
 
@@ -124,7 +135,7 @@ impl DirtyEvaluator {
         runtime: &mut RuntimeState,
         target: NodeId,
     ) {
-        let must_make = runtime.node(target).dirty() || runtime.node(target).absent_on_disk();
+        let must_make = runtime.flags(target).dirty() || runtime.flags(target).absent_on_disk();
         let Some(root) = graph.node(target).generator.filter(|_| must_make) else {
             return;
         };
@@ -143,15 +154,23 @@ impl DirtyEvaluator {
                     work.push(Step::Leave(edge));
                     let inputs: &[NodeId] = &graph.edge(edge).input;
                     for &input in inputs {
+                        // All three reasons to descend are written on the
+                        // prerequisite, so one with none of them is settled by
+                        // a single load and its generating edge is never
+                        // reached. A fourth reason kept anywhere else would
+                        // charge that reach to every prerequisite instead: a
+                        // settled kernel tree reads 1.1 billion of them here
+                        // and 97.6% have nothing to say.
+                        let flags = runtime.flags(input);
+                        let asked_for = flags.intermediate_pending();
+                        if !asked_for && !flags.dirty() && !flags.absent_on_disk() {
+                            continue;
+                        }
                         let Some(generator) = graph.node(input).generator else {
                             continue;
                         };
-                        if runtime.edge(generator).intermediate_pending() {
+                        if asked_for {
                             ask_for(graph, runtime, generator);
-                        } else if !runtime.node(input).dirty()
-                            && !runtime.node(input).absent_on_disk()
-                        {
-                            continue;
                         }
                         work.push(Step::Enter(generator));
                     }
@@ -163,7 +182,7 @@ impl DirtyEvaluator {
                 // again over the answers this walk has just altered.
                 Step::Leave(edge) => {
                     let inputs: &[NodeId] = &graph.edge(edge).input;
-                    if inputs.iter().any(|&input| runtime.node(input).dirty()) {
+                    if inputs.iter().any(|&input| runtime.flags(input).dirty()) {
                         ask_for(graph, runtime, edge);
                     }
                 }
@@ -176,7 +195,7 @@ impl DirtyEvaluator {
 fn ask_for(graph: &Graph, runtime: &mut RuntimeState, edge: EdgeId) {
     let outputs: &[NodeId] = &graph.edge(edge).out;
     for &output in outputs {
-        runtime.node_mut(output).set_dirty(true);
+        runtime.flags_mut(output).set_dirty(true);
     }
 }
 
@@ -226,13 +245,13 @@ mod tests {
 
         let (dirty, runtime) = settled(&graph, 1);
         assert!(!dirty);
-        assert!(!runtime.node(first).dirty());
-        assert!(!runtime.node(second).dirty());
+        assert!(!runtime.flags(first).dirty());
+        assert!(!runtime.flags(second).dirty());
 
         let (dirty, runtime) = settled(&graph, 3);
         assert!(dirty);
-        assert!(runtime.node(first).dirty());
-        assert!(runtime.node(second).dirty());
+        assert!(runtime.flags(first).dirty());
+        assert!(runtime.flags(second).dirty());
     }
 
     /// Two goals over one intermediate, asked together. The walk that asks for
@@ -269,11 +288,56 @@ mod tests {
             &mut stat,
         )
         .unwrap();
-        assert!(runtime.node(first).dirty());
-        assert!(runtime.node(second).dirty());
+        assert!(runtime.flags(first).dirty());
+        assert!(runtime.flags(second).dirty());
         assert!(
-            runtime.node(middle).dirty(),
+            runtime.flags(middle).dirty(),
             "the intermediate both goals read was not asked for"
+        );
+    }
+
+    /// An intermediate that IS there and is stale has work of its own, and the
+    /// walk reads that answer off the prerequisite rather than off the edge
+    /// behind it. Nothing is absent here: the file exists and the scan stood
+    /// the newest thing behind it in for its date, which is exactly what hides
+    /// the staleness from whatever reads it. So the only thing that can ask
+    /// for it is a consumer that has to run anyway.
+    #[test]
+    fn ronin_graph_stale_intermediate_asked_for_by_consumer() {
+        let mut graph = Graph::default();
+        let middle = generated(&mut graph, "mid", "src");
+        let out = generated(&mut graph, "out", "mid");
+        graph
+            .edge_mut(graph.node(out).generator.unwrap())
+            .intermediate = false;
+
+        let settled = |present: &[(&str, i64)]| {
+            let present = present
+                .iter()
+                .map(|(path, when)| ((*path).to_owned(), *when))
+                .collect::<BTreeMap<_, _>>();
+            let mut stat = |path: &Path| Ok(*present.get(&*path.to_string_lossy()).unwrap_or(&0));
+            let mut runtime = RuntimeState::new(&graph);
+            let dirty = recompute_dirty_with(&graph, &mut runtime, out, &mut stat).unwrap();
+            (dirty, runtime)
+        };
+
+        // `mid` is older than `src` and so has work left, but `out` is newer
+        // than the date standing in for `mid` and needs nothing.
+        let (dirty, runtime) = settled(&[("src", 5), ("mid", 3), ("out", 9)]);
+        assert!(!dirty);
+        assert!(
+            !runtime.flags(middle).dirty(),
+            "a stale intermediate nothing needs was asked for"
+        );
+
+        // The same tree with `out` gone: it must be made, and making it is
+        // what asks for the staleness the scan held back.
+        let (dirty, runtime) = settled(&[("src", 5), ("mid", 3)]);
+        assert!(dirty);
+        assert!(
+            runtime.flags(middle).dirty(),
+            "the stale intermediate a consumer had to run over was not asked for"
         );
     }
 
@@ -322,16 +386,16 @@ mod tests {
 
         let (dirty, runtime) = settled(&[]);
         assert!(dirty);
-        assert!(runtime.node(source).dirty());
-        assert!(runtime.node(middle).dirty());
+        assert!(runtime.flags(source).dirty());
+        assert!(runtime.flags(middle).dirty());
 
         // The control, and the whole reason the goal is what is asked about:
         // with the goal on disk there is nothing that must be made, and the
         // chain under it stays as absent as it was.
         let (dirty, runtime) = settled(&["goal"]);
         assert!(!dirty);
-        assert!(!runtime.node(source).dirty());
-        assert!(!runtime.node(middle).dirty());
+        assert!(!runtime.flags(source).dirty());
+        assert!(!runtime.flags(middle).dirty());
     }
 
     /// The same widening one step in, which is where a Makefile actually
@@ -379,13 +443,13 @@ mod tests {
         let (dirty, runtime) = settled(&["src"]);
         assert!(dirty);
         assert!(
-            runtime.node(middle).dirty(),
+            runtime.flags(middle).dirty(),
             "the intermediate under an absent name with no recipe was skipped"
         );
 
         // The control: with the empty-recipe name on disk there is nothing it
         // must be made from, and the intermediate stays uncreated.
         let (_, runtime) = settled(&["src", "quiet", "goal"]);
-        assert!(!runtime.node(middle).dirty());
+        assert!(!runtime.flags(middle).dirty());
     }
 }

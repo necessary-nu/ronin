@@ -548,7 +548,7 @@ fn commit_dyndep(graph: &mut Graph, runtime: &mut RuntimeState, dyndep: NodeId, 
                 .insert(Names::RESTAT, xasprintf(format_args!("1")));
         }
     }
-    runtime.node_mut(dyndep).set_dyndep_pending(false);
+    runtime.flags_mut(dyndep).set_dyndep_pending(false);
 }
 
 pub(crate) fn load_dyndep(
@@ -970,9 +970,9 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out: dyndep\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        assert!(runtime.node(dyndep).dyndep_pending());
+        assert!(runtime.flags(dyndep).dyndep_pending());
         load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
-        assert!(!runtime.node(dyndep).dyndep_pending());
+        assert!(!runtime.flags(dyndep).dyndep_pending());
         let edge = graph
             .node(nodeget(&graph, b"out").unwrap())
             .generator
@@ -1099,7 +1099,7 @@ mod tests {
         assert_eq!(graph.edge(edge1).input, original_inputs);
         assert!(graph.edge(edge1).bindings.get(Names::RESTAT).is_none());
         assert_eq!(graph.node(dyndep).uses, original_uses);
-        assert!(runtime.node(dyndep).dyndep_pending());
+        assert!(runtime.flags(dyndep).dyndep_pending());
         fs::remove_dir_all(directory).unwrap();
     }
 

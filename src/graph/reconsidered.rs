@@ -113,9 +113,9 @@ mod tests {
         let settled = |cone: Option<NodeId>| {
             let mut runtime = RuntimeState::new(&graph);
             scan(&graph, &mut runtime, out, None, &mtimes);
-            assert!(!runtime.node(out).dirty());
-            assert!(!runtime.node(middle).dirty());
-            runtime.node_mut(source).observe(FileTime::observed(9));
+            assert!(!runtime.flags(out).dirty());
+            assert!(!runtime.flags(middle).dirty());
+            runtime.observe(source, FileTime::observed(9));
             scan(&graph, &mut runtime, out, cone, &mtimes);
             runtime
         };
@@ -123,14 +123,14 @@ mod tests {
         // With nothing withheld, the scan re-derives `mid` against the date
         // `src` carries and finds it stale.
         let unrestricted = settled(None);
-        assert!(unrestricted.node(middle).dirty());
-        assert!(unrestricted.node(out).dirty());
+        assert!(unrestricted.flags(middle).dirty());
+        assert!(unrestricted.flags(out).dirty());
 
         // Told that only `out`'s edge can have changed, it never asks about
         // `mid`'s and reads the answer `mid` already carries.
         let restricted = settled(Some(out));
-        assert!(!restricted.node(middle).dirty());
-        assert!(!restricted.node(out).dirty());
+        assert!(!restricted.flags(middle).dirty());
+        assert!(!restricted.flags(out).dirty());
     }
 
     /// The boundary is trusted only where there is an answer standing on it. A
@@ -145,9 +145,9 @@ mod tests {
         let mut runtime = RuntimeState::new(&graph);
         scan(&graph, &mut runtime, out, Some(out), &mtimes);
         assert!(
-            runtime.node(middle).dirty(),
+            runtime.flags(middle).dirty(),
             "an unobserved node was stood on"
         );
-        assert!(runtime.node(out).dirty());
+        assert!(runtime.flags(out).dirty());
     }
 }

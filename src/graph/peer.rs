@@ -60,8 +60,7 @@ pub(crate) fn trigger_output(
         .max()
         .unwrap_or(FileTime::MISSING);
     let out_of_date = reached.find(|output| {
-        let state = runtime.node(*output);
-        state.absent_on_disk() || state.mtime() < newest_input
+        runtime.flags(*output).absent_on_disk() || runtime.node(*output).mtime() < newest_input
     });
     Some(out_of_date.unwrap_or(first))
 }
@@ -137,7 +136,7 @@ mod tests {
         let settled = |graph: &Graph, mtimes: [(NodeId, FileTime); 3]| {
             let mut runtime = RuntimeState::new(graph);
             for (node, mtime) in mtimes {
-                runtime.node_mut(node).observe(mtime);
+                runtime.observe(node, mtime);
             }
             trigger_output(graph, &runtime, edge).unwrap()
         };
