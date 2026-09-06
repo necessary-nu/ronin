@@ -3825,3 +3825,95 @@ fn a_shared_grandchild_and_a_parents_stub_compose() {
         assert!(directory.join(made).exists(), "{made} was not built");
     }
 }
+
+/// kbuild's `if_changed` shape: a recipe whose `$?` chooses between two
+/// entirely different commands, over a `FORCE` prerequisite that keeps the
+/// target permanently out of date.
+///
+/// GNU Make expands a recipe immediately before running it, so `$?` is the
+/// prerequisites it found newer — `in.txt FORCE` on the run that builds, and
+/// `FORCE` alone once the target is current. `newer-prereqs` filters the phony
+/// name out, the `$(if)` sees nothing left, and the second run chooses `@:`.
+///
+/// A compiler that reads the recipe before the build has no such list, and the
+/// placeholder a scheduler-bound `$?` leaves behind is one word that is not in
+/// `$(PHONY)` and is never empty — so the condition is always true and the
+/// command branch is always chosen. That is what made a second run over a
+/// finished linux-6.12.48 tree recompile all 659 of its objects where GNU Make
+/// printed two lines.
+///
+/// Both spellings are here because they fail for different reasons, and either
+/// alone would look like a duplicate of the other. The `$(call)` hides `$?`
+/// behind a function the classification has to enter. The plain one hides it
+/// behind a name a recipe that IS deferred still has to be asked about, and a
+/// launch handed no list at all reads `$?` as empty, chooses `@:`, and builds
+/// nothing on the run that should have built.
+#[test]
+fn a_command_chosen_by_new_inputs_reads_late() {
+    for (label, recipe) in [
+        ("call", "\t$(call if_changed,build)\n"),
+        ("plain", "\t$(if $(newer-prereqs),$(cmd_build),@:)\n"),
+    ] {
+        let directory = test_directory(&format!("new-inputs-decide-{label}"));
+        fs::write(
+            directory.join("Makefile"),
+            format!(
+                "PHONY := FORCE\n\
+                 newer-prereqs = $(filter-out $(PHONY),$?)\n\
+                 cmd_build = cp $< $@ && echo ran >> log\n\
+                 if_changed = $(if $(newer-prereqs),$(cmd_$(1)),@:)\n\
+                 all: out.txt\n\
+                 out.txt: in.txt FORCE\n\
+                 {recipe}\
+                 .PHONY: all FORCE\n\
+                 FORCE:\n"
+            ),
+        )
+        .unwrap();
+        write_at(&directory, "in.txt", "hello\n", 1_000_000);
+
+        let first = make_command(&directory).output().unwrap();
+        assert!(
+            first.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&first.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("out.txt")).unwrap(),
+            "hello\n",
+            "{label}: the first run did not run the command, so `$?` reached it empty"
+        );
+
+        for run in 2..=3 {
+            let again = make_command(&directory).output().unwrap();
+            assert!(
+                again.status.success(),
+                "{label} run {run}: {}",
+                String::from_utf8_lossy(&again.stderr)
+            );
+            assert_eq!(
+                fs::read_to_string(directory.join("log")).unwrap(),
+                "ran\n",
+                "{label} run {run}: the command ran again over a target GNU Make leaves alone"
+            );
+        }
+
+        // And the target is remade when a real prerequisite is newer, which is
+        // the same `$?` answering the other way. Both mtimes are set, because
+        // the `cp` above gave the target the time of day and no artificial
+        // stamp on the source alone would be newer than that.
+        write_at(&directory, "out.txt", "hello\n", 1_000_000);
+        write_at(&directory, "in.txt", "goodbye\n", 2_000_000);
+        let changed = make_command(&directory).output().unwrap();
+        assert!(
+            changed.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&changed.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("out.txt")).unwrap(),
+            "goodbye\n",
+            "{label}: a newer prerequisite did not remake the target"
+        );
+    }
+}
