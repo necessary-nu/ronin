@@ -1006,6 +1006,7 @@ assertions (
     {id a-restat-is-propagated-by-one-walk-per-consumer, kind @doing, author "brendan@necessary.nu", at 2026-09-05T15:13:02.526584588Z}
     {id a-second-kernel-run-rebuilds-a-tree-gnu-leaves-alone, kind @complete, author "brendan@necessary.nu", at 2026-09-06T00:16:42.134658166Z}
     {id a-no-op-kernel-run-spends-three-minutes-deciding-to-do-nothing, kind @doing, author "brendan@necessary.nu", at 2026-09-06T00:22:55.013215335Z}
+    {id zsh-incremental-regressed-from-parity-while-the-gate-refused, kind @doing, author "brendan@necessary.nu", at 2026-09-06T09:20:55.017312694Z}
 )
 
 impl_evidence (
