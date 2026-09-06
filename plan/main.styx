@@ -21745,4 +21745,18 @@ children (
             }
         )
     }
+
+    {
+        id a-no-op-kernel-run-spends-three-minutes-deciding-to-do-nothing
+        title "Decide a finished tree is finished without walking it repeatedly"
+        kind @perf
+        log (
+            {
+                at 2026-09-06T00:21:57.294296924Z
+                author "brendan@necessary.nu"
+                kind @blocker
+                text "RONIN NO LONGER REBUILDS THE KERNEL, AND IT IS STILL NOT A USABLE INCREMENTAL BUILD. 4240331 fixed the work: a second run over a finished linux-6.12.48 allnoconfig tree now runs ZERO commands. What is left is the time it takes to establish that.\n\nMEASURED BY ME, not relayed, on the committed binary at b6cc5f9:\n\n  rc=0, wall 190.5s, load 2.13 before the run\n  compiles 0, links 0, AR 0\n  lines carrying text 1; stderr empty\n\n  GNU Make 4.4.1 on the same finished tree: 2 lines, 1.2 SECONDS.\n\nSo 158x GNU to decide there is nothing to do. Nobody would use this.\n\nWHERE THE TIME GOES, from the agent's `perf` over a no-op run and consistent with what I profiled earlier on the same code path:\n  27%  graph::intermediate::DirtyEvaluator::push_intermediates\n  10%  graph::DirtyEvaluator::evaluate\n   9%  build::Builder::settle_edge\nRecipe expansion does NOT appear in the profile, so this is not the deferral work 4240331 added — it is the dirty propagation. 3d57103 already made one pass at this: `recompute_consumers_after_restat` used to run a full dirty scan per consumer, O(consumers x graph), and asking the cone as a set under one traversal took the tree from eleven minutes to under three. The remaining cost is the same family and was simply not the dominant term until the rebuilds stopped hiding it.\n\nSCALE THAT MAKES IT MATTER. The composed kernel graph is 51,060 nodes and 50,346 edges; one restat propagation reached 48,665 consumers. A no-op invocation makes 342,737 deferral decisions, once per node per composed unit — that count is the shape of the problem: work proportional to nodes TIMES units rather than to nodes.\n\nWHAT THIS IS NOT. Not the rebuild defect (fixed, verified zero commands). Not recipe expansion (absent from the profile). Not the host (load was 2.13, the quietest this campaign has seen).\n\nTWO HAZARDS FOR WHOEVER MEASURES THIS, both learned the hard way:\n* An `eprintln!` anywhere on the population path DEADLOCKS a kernel build within minutes — a recipe fork landing while another thread holds Rust's stderr lock inherits it locked. Use a raw `libc::write(2, ...)`.\n* Two Ronin builds in one tree at once also deadlock. Serialise them.\n\nReproduce: reference/make-projects/linux-6.12.48-ronin, `make -j8` through target/make-performance-bin/make, twice. The tree is currently finished, so one run is enough."
+            }
+        )
+    }
 )
