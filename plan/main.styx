@@ -21794,4 +21794,18 @@ children (
             }
         )
     }
+
+    {
+        id zsh-incremental-regressed-from-parity-while-the-gate-refused
+        title "Find and undo what made zsh-incremental half again slower than GNU"
+        kind @perf
+        log (
+            {
+                at 2026-09-06T09:19:53.910530058Z
+                author "brendan@necessary.nu"
+                kind @blocker
+                text "A REAL REGRESSION THAT RAN UNSEEN FOR THE WHOLE MAKE CAMPAIGN, because the gate that would have caught it refused on host load every time it was asked.\n\nRECORDED, benchmarks/make-baseline-v1.csv, 2026-08-30 at load 2.02:\n  zsh-incremental  GNU 1433.4 ms   Ronin 1480.5 ms   ratio 1.03x\n\nMEASURED BY ME at 7ce3ad1, paired and interleaved on the campaign's own zsh-5.9.2 tree, load 9.0, five pairs after letting GNU settle its own fixed point first:\n  GNU 1650 / 1548 / 1526 / 1601 / 1654 ms\n  Ronin 2501 / 2578 / 2398 / 2562 / 2593 ms\n  ratios 1.52 1.67 1.57 1.60 1.57 — median 1.57x\n\nGNU's own numbers are close to its recorded ones (1526-1654 against 1433), so the host is not what moved. Ronin's went 1480 -> ~2500 ms. Parity became half again slower.\n\nINDEPENDENTLY REPORTED BY THE AGENT THAT FOUND IT, at load 2-4 when the host finally quieted — the first time either performance gate RAN this campaign. `scripts/check-make-performance.sh` FAILED with \"zsh-incremental Ronin/GNU ratio regressed to 1.54x from the recorded 1.03x\". It is NOT that agent's change: through the same harness at the same load, HEAD measured 1.59x and 1.62x against its own 1.54x and 1.58x, and Ronin's zsh-incremental p10 was 2,177 ms at HEAD against 2,189 ms with the change. `scripts/check-performance.sh` (Ninja mode) PASSED.\n\nSO THE CAUSE IS SOMEWHERE IN THE MAKE CAMPAIGN BEFORE 7ce3ad1, and the window is wide. Candidates landed since the baseline, in order: the nsh-based `$(MAKE)` lift and the enclosing-files rule (5791513); the LinePrinter narration change (bc45104); the makefile-stamp content hash (58bbc20) — note this one reads and hashes every consulted makefile on every staging pass, and zsh takes 26 of them; the sub-make job budget (1846d85); the wrapper-probe hold (2dfa6b3); the bare `./` default goal (c6fcfdc); the alias-as-ordering composition (5327e10); the restat propagation (3d57103, 39e713a); `adopt_child_groups` (47abbf5); and the parse carry (7ce3ad1).\n\nBISECT IT RATHER THAN REASONING ABOUT IT. The workload is small and the measurement is quick: `scripts/check-make-performance.sh` is the gate, but a paired hand measurement as above is enough to bisect with and does not need a quiet host, because the RATIO against GNU in the same window is what moved. Build each candidate and take five interleaved pairs.\n\nWORTH KNOWING WHILE BISECTING. zsh is `.NOTPARALLEL` in all seven generated makefiles, so both tools run it essentially serially and this workload is dominated by the READ, not by scheduling. That points at the read-side changes — the stamp hash and the lift — ahead of the graph-side ones, but that is a hint and not a finding.\n\nTHE GATES MUST BE MADE TO RUN. Every performance claim in this campaign is unverified because both gates refused above their 4.00 load guard for days on a host carrying another tenant. That is its own problem: a gate that never runs is not a gate. The Ninja-mode one passed when it finally ran; the Make-mode one caught this on its first opportunity."
+            }
+        )
+    }
 )
