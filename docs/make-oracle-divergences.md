@@ -294,7 +294,7 @@ binary on 2026-09-04.
 | 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port`; node `make-recursive-keep-going-choreography-writes-different-files` | **DEFECT** — his ruling was conditional and the condition FAILED (measured) |
 | 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"fine."* |
 | 10 | `-k` builds nothing past an unmakeable prerequisite | **Yes** — `-k` with a prerequisite that has no rule | `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite` (retired) | **operator, 2026-08-24**: *"Ronin superior. Accepted divergence."* |
-| 11 | A remade Makefile is told from an unmoved one by its contents as well as its date | **Yes** — any Makefile a rule rewrites faster than a timestamp tick | `a_read_that_never_settles_is_still_refused` and `a_frozen_date_does_not_hide_a_rewrite` in `tests/make_regressions.rs`; `make.compiler-input-staging+1` | **operator, 2026-09-04**: ruled critical path, *"THIS DIVERGES FROM GNU MAKE, DELIBERATELY, ON EXACTLY THE MAKEFILES WHERE GNU IS UNRELIABLE."* |
+| 11 | A remade Makefile is told from an unmoved one by its contents as well as its date | **Yes** — any Makefile a rule rewrites faster than a timestamp tick | `a_read_that_never_settles_is_still_refused` and `a_frozen_date_does_not_hide_a_rewrite` in `tests/make_regressions.rs`; `make.compiler-input-staging+2` | **operator, 2026-09-04**: ruled critical path, *"THIS DIVERGES FROM GNU MAKE, DELIBERATELY, ON EXACTLY THE MAKEFILES WHERE GNU IS UNRELIABLE."* |
 | — | Two defects this survey found | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
 
 **On the numbering.** The operator ruled on the `-k`-past-an-unmakeable-prerequisite
@@ -883,7 +883,7 @@ by** two cases in `tests/make_regressions.rs` —
 machine produces it, and
 `a_frozen_date_does_not_hide_a_rewrite`, which pins
 the same question with the clock taken out of it — and by
-`[spec:ronin:req:make.compiler-input-staging+1]`.
+`[spec:ronin:req:make.compiler-input-staging+2]`.
 
 **What GNU does / what Ronin does.** After bringing the Makefiles up to date,
 GNU Make decides whether to start the read over by comparing each one's

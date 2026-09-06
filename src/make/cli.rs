@@ -1381,8 +1381,10 @@ fn session_for(
     invoked_as: &Path,
     diagnostics: &Arc<kati::diagnostics::Diagnostics>,
     census: &Arc<kati::census::Census>,
+    scripts: &Arc<kati::scripts::Scripts>,
 ) -> Session {
     let mut session = Session::new();
+    session.scripts = Arc::clone(scripts);
     // Every session of one invocation writes what it has to say to the same
     // descriptor, which is the invocation's rather than the process's: a
     // warning raised while a Makefile is read is part of what the compilation
@@ -1859,6 +1861,12 @@ fn prepare_graph(
     // exactly on the boundary: 99 recipes built, 100 refused. zsh's generated
     // `Src/Modules/Makefile` already stands at sixty.
     let mut fruitless = 0_usize;
+    // One per invocation rather than one per pass, because the readings a pass
+    // makes are exactly the readings the pass after it would make again: the
+    // repeated read is handed the text the first read saw, so a line that named
+    // a Make in one pass is the same bytes in the next. See
+    // [`kati::scripts::Scripts`].
+    let scripts = Arc::<kati::scripts::Scripts>::default();
     while fruitless < MANIFEST_RETRY_LIMIT {
         let settled_before = settled.boundaries.len();
         // Each pass reads the whole compilation again, so what an earlier one
@@ -1872,6 +1880,7 @@ fn prepare_graph(
             root.invoked_as,
             root.diagnostics,
             root.census,
+            &scripts,
         );
         if let Some(contents) = root.makefile_contents {
             session.supply_makefile(STANDARD_INPUT.into(), contents.to_vec());
@@ -2359,6 +2368,7 @@ fn compilation_context(
         diagnostics: Arc::clone(&session.diagnostics),
         interrupts: crate::make::interrupts::ReadInterrupts::installed(),
         census: Arc::clone(&session.census),
+        scripts: Arc::clone(&session.scripts),
         reporting,
         makeflags: propagated_makeflags(invocation),
         always_make: invocation.given(Switch::AlwaysMake),

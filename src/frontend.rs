@@ -296,6 +296,15 @@ impl Default for BuildGraph {
     }
 }
 
+/// What one staged recursive wrapper's freshness scan settled.
+pub(crate) struct StagedFreshness {
+    /// Whether the wrapper's own outputs oblige the recipe to run.
+    pub(crate) dirty: bool,
+    /// Whether bringing the work staged ahead of it up to date would start no
+    /// process. See [`BuildGraph::staged_wrapper_freshness`].
+    pub(crate) staged_runs_nothing: bool,
+}
+
 impl BuildGraph {
     /// An empty graph holding only the built-in `phony` rule and `console` pool.
     #[must_use]
@@ -754,26 +763,45 @@ impl BuildGraph {
         }
     }
 
-    /// Evaluate one staged edge's timestamp freshness without executing it.
-    /// `runtime` and `scratch` are both scratch: each is reset to what a fresh
-    /// one holds before anything reads it, so what the caller passes decides
-    /// only which allocation the scan uses. Passed in because one scan sizes
-    /// its state to the WHOLE graph while reading one edge's ancestors, and a
-    /// composition that stages a wrapper per unit would otherwise stand up a
-    /// new one of those per unit against a graph that grew with every unit
-    /// before it.
-    pub(crate) fn edge_dirty_with<F>(
+    /// Evaluate one staged wrapper's timestamp freshness without executing it,
+    /// and say what the work it is read off amounts to.
+    ///
+    /// Both answers come out of one recomputation because they are one walk:
+    /// the wrapper's own closure and the work staged ahead of it overlap, and a
+    /// composition asks about a wrapper per recursive recipe. `runtime` and
+    /// `scratch` are both scratch: each is reset to what a fresh one holds
+    /// before anything reads it, so what the caller passes decides only which
+    /// allocation the scan uses. Passed in because one scan sizes its state to
+    /// the WHOLE graph while reading one edge's ancestors, and a composition
+    /// that stages a wrapper per unit would otherwise stand up a new one of
+    /// those per unit against a graph that grew with every unit before it.
+    ///
+    /// `staged_runs_nothing` is the dirty closure of `staged` walked with the
+    /// question the build asks of each job it reaches: a Make target with no
+    /// commands compiles to the built-in phony rule, and a phony edge writes
+    /// nothing, so a closure of nothing but those is work whose whole effect on
+    /// the disk is that it finished. Conservative wherever the graph does not
+    /// say plainly — any other rule counts as a process, and a node reached
+    /// through a deferred freshness activation is walked as an input. It does
+    /// not account for `-B`, under which a clean node the walk stops at may
+    /// still be one the build is going to run; a caller under that switch must
+    /// not take the answer.
+    pub(crate) fn staged_wrapper_freshness<F>(
         &self,
         edge: Edge,
+        staged: &[Node],
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
         runtime: &mut RuntimeState,
         scratch: &mut TraversalScratch,
-    ) -> Result<bool, crate::error::GraphError>
+    ) -> Result<StagedFreshness, crate::error::GraphError>
     where
         F: FnMut(&std::path::Path) -> std::io::Result<i64>,
     {
         let target = self.arenas.edge(edge.0).out[0];
+        let mut roots = Vec::with_capacity(staged.len() + 1);
+        roots.push(target);
+        roots.extend(staged.iter().map(|node| node.0));
         runtime.reset_asked(&self.arenas);
         // `-W FILE` and `-o FILE` are answers about a file, and this question
         // is about a file, so both switches reach it. Resolved against the
@@ -781,15 +809,40 @@ impl BuildGraph {
         // the names were given to the invocation, and one the graph does not
         // hold answers about nothing.
         asserted.mark_on(&self.arenas, runtime);
-        recompute_dirty_with_validations(
-            &self.arenas,
-            runtime,
-            scratch,
-            std::slice::from_ref(&target),
-            None,
-            stat,
-        )?;
-        Ok(runtime.node(target).dirty())
+        recompute_dirty_with_validations(&self.arenas, runtime, scratch, &roots, None, stat)?;
+        let mut runs_nothing = true;
+        let mut walked = std::collections::HashSet::new();
+        let mut work: Vec<NodeId> = roots[1..].to_vec();
+        while let Some(node) = work.pop() {
+            // A node the build would leave alone reaches nothing: what stands
+            // behind a clean output is work the build has no cause to enter.
+            if !runtime.node(node).dirty() {
+                continue;
+            }
+            let Some(edge) = self.arenas.node(node).generator else {
+                continue;
+            };
+            if !walked.insert(edge) {
+                continue;
+            }
+            if !self.arenas.is_phony_rule(self.arenas.edge(edge).rule) {
+                runs_nothing = false;
+                break;
+            }
+            let stored = self.arenas.edge(edge);
+            work.extend(stored.input.iter().copied());
+            work.extend(stored.validation.iter().copied());
+            work.extend(
+                self.arenas
+                    .deferred_freshness(edge)
+                    .into_iter()
+                    .flat_map(|freshness| freshness.activations.iter().copied()),
+            );
+        }
+        Ok(StagedFreshness {
+            dirty: runtime.node(target).dirty(),
+            staged_runs_nothing: runs_nothing,
+        })
     }
 
     /// Keep work completed through a provisional compiler graph completed in

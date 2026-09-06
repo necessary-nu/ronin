@@ -2803,6 +2803,63 @@ fn recursive_recipes_beyond_the_retry_limit_still_compose() {
     }
 }
 
+/// A recursive recipe whose prerequisites hold no process is composed where it
+/// stands, and one whose prerequisites hold a process still waits for it.
+///
+/// Staging costs a pass, and the pass buys the disk the child's Makefile is
+/// read off. Where the prerequisites' whole dirty closure is targets with no
+/// recipe, nothing is written and the pass buys nothing.
+///
+/// The pass count is not visible from inside a Makefile — a repeated read
+/// replays what the first was told — so what is pinned here is the half that
+/// goes wrong if the question is answered too generously. `generated`, whose
+/// recipe WRITES the child's Makefile, sits behind a phony with no recipe of
+/// its own: a walk that stopped at the phony would read the child before the
+/// file was there, and the build would end with no Makefile to read. The
+/// phony-only case beside it is the shape the question is for, and it is here
+/// to say that composing it a pass earlier still builds it.
+// [spec:ronin:req:make.compiler-input-staging+2/test]
+#[test]
+fn a_boundary_holding_no_process_is_not_one() {
+    let directory = test_directory("phony-only-boundary");
+    fs::create_dir_all(directory.join("ready")).unwrap();
+    fs::write(
+        directory.join("ready").join("Makefile"),
+        "all:\n\t@echo ready\n",
+    )
+    .unwrap();
+    fs::create_dir_all(directory.join("late")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".PHONY: all gate written\n\
+         all: settled staged\n\
+         gate:\n\
+         settled: gate\n\t@$(MAKE) -C ready\n\
+         written: generated\n\
+         generated:\n\t@printf 'all:\\n\\t@echo late\\n' > late/Makefile\n\
+         staged: written\n\t@$(MAKE) -C late\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("ready"),
+        "the phony-only recursion did not run: {said}"
+    );
+    assert!(
+        said.contains("late"),
+        "the recursion behind a written Makefile did not run: {said}"
+    );
+}
+
 /// Every independent recursive recipe of one unit stages its boundary in the
 /// same pass, so the staged work goes out together.
 ///
@@ -2821,7 +2878,7 @@ fn recursive_recipes_beyond_the_retry_limit_still_compose() {
 /// arrived. Staged one per pass they never meet, and nothing here can pass by
 /// being lucky about timing: the barrier is either met or the case fails on
 /// its own timeout.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn many_independent_recursions_stage_in_one_pass() {
     let directory = test_directory("independent-recursions-one-pass");
@@ -2894,7 +2951,7 @@ fn many_independent_recursions_stage_in_one_pass() {
 /// The `OVERLAP` line is the assertion, exactly as in
 /// [`two_notparallel_sub_makes_never_overlap`], and the two goals reach
 /// different child makefiles so that no cached child is shared between them.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn one_copy_of_a_makefile_stages_per_pass() {
     let directory = test_directory("one-staging-copy-a-pass");
@@ -2953,7 +3010,7 @@ fn one_copy_of_a_makefile_stages_per_pass() {
 /// goals, and that child stops at a boundary of its own on the first pass. The
 /// two counters are the two Makefiles' own `$(shell)`: the child must be read
 /// exactly as many times as the parent, never more.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn a_stopped_child_is_read_once_a_pass() {
     let directory = test_directory("stopped-child-read-once");
@@ -3018,7 +3075,7 @@ fn a_stopped_child_is_read_once_a_pass() {
 /// what the release profile did while the debug profile was slow enough to
 /// refuse. The case below asks the same question with the clock taken out of
 /// it.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn a_read_that_never_settles_is_still_refused() {
     let directory = test_directory("never-settles");
@@ -3051,7 +3108,7 @@ fn a_read_that_never_settles_is_still_refused() {
 /// So the exit status is the assertion, and the appended lines beside it: the
 /// read must keep going around, on the contents, until the retry ceiling stops
 /// it.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn a_frozen_date_does_not_hide_a_rewrite() {
     let directory = test_directory("frozen-date-rewrite");
@@ -3365,7 +3422,7 @@ fn two_recipes_for_one_path_are_still_refused() {
 /// pass has already run every action it could. Three records are not enough to
 /// show it — the third is the last, and nothing waits on what it left — so
 /// four is the smallest chain that does.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn a_held_double_colon_record_holds_its_readers() {
     let directory = test_directory("held-double-colon-chain");
@@ -3415,7 +3472,7 @@ fn a_held_double_colon_record_holds_its_readers() {
 /// rule that makes it, because a `.cmd` fragment naming a target the makefile
 /// also names is what put the mention next to the wrapper in the report, and
 /// neither order may change the answer.
-// [spec:ronin:req:make.compiler-input-staging+1/test]
+// [spec:ronin:req:make.compiler-input-staging+2/test]
 #[test]
 fn a_held_recursive_recipe_holds_its_readers() {
     for (label, mention_first) in [("rule-first", false), ("mention-first", true)] {

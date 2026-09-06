@@ -69,6 +69,7 @@ pub(in crate::make) fn compile(
         &invoked_as,
         &parent.diagnostics,
         &parent.census,
+        &parent.scripts,
     );
     session.invocation_environment = Some(std::sync::Arc::clone(&parent.environment));
     let level = parent.level.saturating_add(1);
@@ -91,12 +92,7 @@ pub(in crate::make) fn compile(
         shell_flags,
         parent,
     );
-    let mut recipe_environment = parent.recipe_environment.clone();
-    set_recipe_environment(
-        &mut recipe_environment,
-        OsString::from(MAKELEVEL),
-        Some(OsString::from(level.saturating_add(1).to_string())),
-    );
+    let recipe_environment = child_recipe_environment(parent, level);
     let environment = session
         .invocation_environment
         .clone()
@@ -108,6 +104,7 @@ pub(in crate::make) fn compile(
             diagnostics: std::sync::Arc::clone(&parent.diagnostics),
             interrupts: std::sync::Arc::clone(&parent.interrupts),
             census: std::sync::Arc::clone(&parent.census),
+            scripts: std::sync::Arc::clone(&parent.scripts),
             reporting: parent.reporting,
             root_directory: parent.root_directory.clone(),
             directory,
@@ -194,6 +191,21 @@ fn extend_compilation_key(
     key.extend_from_slice(shell_flags);
     append_environment_key(key, &parent.environment);
     append_recipe_environment_key(key, &parent.recipe_environment);
+}
+
+/// What a child's own recipes are given on top of the build environment: its
+/// parent's delta, with the `MAKELEVEL` the Makes the CHILD starts will read.
+fn child_recipe_environment(
+    parent: &CompilationContext,
+    level: usize,
+) -> Vec<(OsString, Option<OsString>)> {
+    let mut recipe_environment = parent.recipe_environment.clone();
+    set_recipe_environment(
+        &mut recipe_environment,
+        OsString::from(MAKELEVEL),
+        Some(OsString::from(level.saturating_add(1).to_string())),
+    );
+    recipe_environment
 }
 
 fn set_recipe_environment(

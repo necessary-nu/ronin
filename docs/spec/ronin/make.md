@@ -290,7 +290,7 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
-> [spec:ronin:req:make.compiler-input-staging+1]
+> [spec:ronin:req:make.compiler-input-staging+2]
 > A child Makefile that cannot be read until something exists is a boundary, not
 > a refusal. The composition records what the read needs, leaves the unit
 > incomplete, builds that work provisionally, and reads the same text again —
@@ -323,6 +323,17 @@ manifest-derived graph is.
 > recipe read off a held one is held with it, which the order the recipes compose
 > in already answers; where that order finds a cycle nothing is known about
 > anything and the first held recipe holds the rest.
+>
+> A boundary whose work would start no process is not a boundary. What staging
+> buys is the disk the child's Makefile is read off, and a dirty closure of
+> nothing but targets with no recipe writes nothing to it — a phony edge
+> finishes, and every file is as the read already found it. Such a boundary is
+> therefore composed through in the pass that reached it, which is where GNU Make
+> composes it: it considers the prerequisites, finds nothing to remake, and
+> starts the child against the disk it had. The question is not asked under `-B`,
+> which makes every target with a recipe out of date and so puts a process behind
+> a closure the walk would otherwise have stopped at, its clean nodes reaching
+> nothing.
 >
 > Composing is not staging and does not batch. Every composition of one makefile
 > holds its own ISOLATED copy of every rule in it, each settled against the disk

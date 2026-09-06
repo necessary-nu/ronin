@@ -305,7 +305,7 @@ pub struct GraphSink {
     ///
     /// Holds nothing between uses: it is reset to what a fresh one holds before
     /// each scan reads it, so all it carries across is the allocation. See
-    /// [`crate::frontend::BuildGraph::edge_dirty_with`], which sizes it to the
+    /// [`crate::frontend::BuildGraph::staged_wrapper_freshness`], which sizes it to
     /// whole graph — a composition staging one wrapper per unit against a graph
     /// that grows with every unit pays for that sizing once per unit.
     subninja_freshness: crate::runtime::RuntimeState,
@@ -951,24 +951,35 @@ impl GraphSink {
     pub(crate) fn settle_subninja_freshness<F>(
         &mut self,
         edge: Edge,
+        staged: &[Node],
+        begun: bool,
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
-    ) -> Result<bool, crate::error::GraphError>
+    ) -> Result<crate::frontend::StagedFreshness, crate::error::GraphError>
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
     {
-        if self.graph.edge_dirty_with(
+        let settled = self.graph.staged_wrapper_freshness(
             edge,
+            staged,
             stat,
             asserted,
             &mut self.subninja_freshness,
             &mut self.subninja_scratch,
-        )? {
-            return Ok(true);
+        )?;
+        // `begun` outranks the disk, for the reason the caller records: a
+        // recipe whose earlier lines have already run may have written this
+        // wrapper's own target, and reading that back would take the recipe's
+        // work for evidence that the recipe need not run.
+        if begun || settled.dirty {
+            return Ok(crate::frontend::StagedFreshness {
+                dirty: true,
+                ..settled
+            });
         }
         self.graph.set_edge_rule(edge, self.phony);
         self.graph.unalias_outputs(edge);
-        Ok(false)
+        Ok(settled)
     }
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.

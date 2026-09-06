@@ -492,7 +492,7 @@ impl Passes<'_, '_, '_> {
     }
 }
 
-// [spec:ronin:req:make.compiler-input-staging+1]
+// [spec:ronin:req:make.compiler-input-staging+2]
 /// How one Makefile this read consulted stands right now: its date AND what is
 /// in it.
 ///

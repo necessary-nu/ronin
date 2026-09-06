@@ -218,6 +218,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             diagnostics: std::sync::Arc::clone(&session.diagnostics),
             interrupts: interrupts::ReadInterrupts::installed(),
             census: std::sync::Arc::clone(&session.census),
+            scripts: std::sync::Arc::clone(&session.scripts),
             reporting: false,
             root_directory: directory.clone(),
             directory,
@@ -280,6 +281,12 @@ pub(crate) struct CompilationContext {
     /// Where every one of them records what it classified about a recursive
     /// invocation, for a caller that asked for a report rather than a build.
     pub(crate) census: std::sync::Arc<kati::census::Census>,
+    /// The shell's readings of the recipe lines that name a Make, shared for
+    /// the reason the census is: a staging pass reads every unit again, and a
+    /// unit is read once per goal that reaches it, so one line is read as the
+    /// shell would dozens of times to the one answer. See
+    /// [`kati::scripts::Scripts`].
+    pub(crate) scripts: std::sync::Arc<kati::scripts::Scripts>,
     /// Whether this compilation is being run to report on the build rather
     /// than to make it.
     ///
@@ -1242,7 +1249,7 @@ fn compile_unit(
     })
 }
 
-// [spec:ronin:req:make.compiler-input-staging+1]
+// [spec:ronin:req:make.compiler-input-staging+2]
 fn compose_subninjas(
     unit: UnitOutput,
     compilation_key: &[u8],
@@ -1317,7 +1324,7 @@ fn compose_subninjas(
         // the update force what GNU has stopped forcing.
         let forced =
             descendant_context.always_make && !(for_makefile && descendant_context.restarted);
-        let wrapper = match stage_recursive_wrapper(
+        let (wrapper, staged_runs_nothing) = match stage_recursive_wrapper(
             sink,
             &mut pending,
             &disk,
@@ -1328,7 +1335,7 @@ fn compose_subninjas(
                 subtree_edges.push(wrapper);
                 continue;
             }
-            RecursiveWrapper::Dirty(wrapper) => wrapper,
+            RecursiveWrapper::Dirty(wrapper, staged_runs_nothing) => (wrapper, staged_runs_nothing),
         };
         // Only a recipe that is going to run needs its compiler inputs on the
         // ground, because only a recipe that is going to run has a child to
@@ -1346,7 +1353,24 @@ fn compose_subninjas(
         // holds two recursive recipes per module and made 61 passes over its
         // 3,231 lines to compose ten children, where a `modobjs` with no
         // recursion in it reads the same file once.
-        if !parent_inputs.is_empty()
+        //
+        // And a boundary whose work would start no process is not one. Staging
+        // buys the pass it costs whenever there is a write to wait for; where
+        // the whole dirty closure is phony there is none, because a phony edge
+        // finishes without touching a file, so the disk the child would be read
+        // off after the provisional build is the disk this read already has.
+        // GNU Make reaches the same point by considering the prerequisites,
+        // finding nothing to remake, and starting the child against the disk it
+        // had. Of everything zsh's six makefiles put in front of a recursion on
+        // an already-built tree, five names hold a process — `Src/Makemod`,
+        // `Src/Zle/headers`, `Src/rm-modobjs-tmp`, `Src/modobjs.zsh` and
+        // `config.modules` — and the rest are phony.
+        //
+        // Not asked under `-B`, which makes every target with a recipe out of
+        // date: the walk stops at a clean node, and under that switch a clean
+        // node with a recipe is one the build is going to run.
+        if (forced || !staged_runs_nothing)
+            && !parent_inputs.is_empty()
             && !state.stage(
                 compilation_key,
                 pending_index,
@@ -1499,7 +1523,7 @@ struct RecipeSite<'a> {
 ///
 /// `site` is where in the compilation this recipe sits, which phase it belongs
 /// to, and whatever a worker has already read for it.
-// [spec:ronin:req:make.compiler-input-staging+1]
+// [spec:ronin:req:make.compiler-input-staging+2]
 fn compose_child_groups(
     pending: &sink::PendingSubninja,
     site: RecipeSite<'_>,
@@ -1767,7 +1791,10 @@ fn freshness_disk(
 
 enum RecursiveWrapper {
     Current(Edge),
-    Dirty(Edge),
+    /// The wrapper, and whether bringing the recipe's prerequisites up to date
+    /// would start no process — which is what decides whether they are a
+    /// boundary. See [`compose_subninjas`].
+    Dirty(Edge, bool),
 }
 
 /// Decide whether one recursive recipe has to run, before any child Makefile
@@ -1789,14 +1816,17 @@ fn stage_recursive_wrapper(
         new: &context.assumed_new,
         old: &context.assumed_old,
     };
+    // Read off the recipe rather than handed in, because the one scan below
+    // answers about the wrapper and about these together and there is no
+    // arrangement of the two under which they are different lists.
+    let staged = pending.evaluation_inputs();
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
-    let dirty = begun
-        || sink
-            .settle_subninja_freshness(edge, &mut stat, asserted)
-            .map_err(|error| MakeError::Evaluate(error.to_string()))?;
-    Ok(if dirty {
-        RecursiveWrapper::Dirty(edge)
+    let settled = sink
+        .settle_subninja_freshness(edge, &staged, begun, &mut stat, asserted)
+        .map_err(|error| MakeError::Evaluate(error.to_string()))?;
+    Ok(if settled.dirty {
+        RecursiveWrapper::Dirty(edge, settled.staged_runs_nothing)
     } else {
         RecursiveWrapper::Current(edge)
     })
