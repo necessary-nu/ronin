@@ -516,7 +516,14 @@ pub(crate) struct UnitJournal {
     /// what the read IS, so it is pinned rather than journalled: a makefile a
     /// staged child has rewritten, or removed, still reads as the text GNU
     /// Make's one read had.
-    sources: Vec<(OsString, Vec<u8>)>,
+    sources: Vec<(OsString, kati::bytes::Bytes)>,
+    /// What that read MADE of the text.
+    ///
+    /// Nothing in it may be an answer the ground gave, because a staged build
+    /// moves files between one pass and the next. See
+    /// [`kati::session::ReadSubstrate`], which says what is in it and why each
+    /// part is safe to carry.
+    substrate: Option<kati::session::ReadSubstrate>,
 }
 
 /// Every unit's journal, keyed by cache key.
@@ -1053,6 +1060,11 @@ fn read_unit(
     let journal = UnitJournal {
         ground: ev.session.ground_journal.close_read(),
         sources: ev.session.read_sources(),
+        // Must stay ahead of any recipe expansion of this unit: what an
+        // expansion mints belongs to the build rather than to the text, and
+        // carrying it moves the ordinal of a name a later read mints for
+        // itself. See [`kati::session::Session::read_substrate`].
+        substrate: Some(ev.session.read_substrate()),
     };
     let (deferred_edges, settled_edges) = sink.take_late_edges();
     // A unit with nothing left to expand has no further use for the session

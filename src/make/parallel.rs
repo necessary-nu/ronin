@@ -818,6 +818,13 @@ pub(super) fn prepare_session(compilation: &mut Compilation, read_units: &ReadJo
     for (name, contents) in replayed.map_or(&[][..], |journal| &journal.sources) {
         session.supply_makefile(name.clone(), contents.clone());
     }
+    // And what that text READ AS. Refused, and the makefiles read again, where
+    // this session has already minted something the carried names do not begin
+    // with — which is a session built from a different invocation than the one
+    // that read.
+    if let Some(carried) = replayed.and_then(|journal| journal.substrate.as_ref()) {
+        session.adopt_read_substrate(carried);
+    }
 }
 
 /// A child compilation the composition is about to make, and its Makefiles
