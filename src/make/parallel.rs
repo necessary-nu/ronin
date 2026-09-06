@@ -757,7 +757,7 @@ fn prepare_read(
 /// entering it is what a worker does on its own behalf: kati reads relative
 /// names against the working directory, and on a worker that directory is the
 /// worker's own.
-pub(super) fn evaluate_unit(
+fn evaluate_unit(
     session: Session,
     directory: &std::path::Path,
     evaluation: kati::ninja::BuildEvaluation,
@@ -931,6 +931,19 @@ impl ChainPlan {
     /// composition gets that from its own cache of compiled subgraphs; a worker
     /// cannot see that cache, and both sides claim here instead.
     fn claim(&self, key: &[u8]) -> bool {
+        // A unit an earlier pass read is nobody's to read. Asked here as well
+        // as in [`ChildUnit::claim`] so one unit is answered the same way
+        // however the composition arrives at it: a fresh read and a kept one
+        // are not required to agree, because dependency analysis asks the
+        // ground about names the journal does not cover and the ground has
+        // moved since.
+        if self
+            .read_units
+            .get(key)
+            .is_some_and(|journal| journal.read.is_some())
+        {
+            return false;
+        }
         self.claims
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1073,26 +1086,113 @@ impl ChildUnit {
                 let mut compilation = *compilation;
                 let cache_key = compilation.cache_key.clone();
                 let context = compilation.context.clone();
+                // Asked before the session is prepared, because preparing one
+                // is part of what a repeat would cost: the journal's answers
+                // are copied into it, the makefiles the first read got are
+                // supplied to it, and the substrate that read made of them is
+                // adopted, all to reach an answer that is already in hand.
+                if let Some(read) = state
+                    .read_units
+                    .get(&cache_key)
+                    .and_then(|journal| journal.read.clone())
+                {
+                    return Ok((cache_key, ClaimedRead::Repeated(Box::new((read, context)))));
+                }
                 prepare_session(&mut compilation, &state.read_units);
                 state
                     .read_claims
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .insert(cache_key.clone());
-                (cache_key, Err((compilation.session, context)))
+                (
+                    cache_key,
+                    ClaimedRead::Unread(Box::new((compilation.session, context))),
+                )
             }
             // The key is taken rather than copied: a started read holds the only
             // copy of it and nothing reads it through the read again.
-            Self::Read(mut read) => (std::mem::take(&mut read.cache_key), Ok(read)),
+            Self::Read(mut read) => (
+                std::mem::take(&mut read.cache_key),
+                ClaimedRead::Started(read),
+            ),
         })
     }
 }
 
 /// What [`ChildUnit::claim`] answers with.
-pub(super) type Claimed = (
-    Vec<u8>,
-    Result<Box<ChildRead>, (Session, CompilationContext)>,
-);
+pub(super) type Claimed = (Vec<u8>, ClaimedRead);
+
+/// One unit's read, and how the composition came by it.
+pub(super) struct Performed {
+    pub(super) read: Result<super::CarriedRead, MakeError>,
+    /// What the worker that read this unit already read for its children, which
+    /// the composition adopts rather than resolving and reading again. Empty
+    /// where nothing read ahead.
+    pub(super) chained: Vec<ChainedRead>,
+    /// Whether the read is one an earlier pass performed.
+    pub(super) repeated: bool,
+}
+
+/// Where this unit's read is going to come from.
+///
+/// Boxed alike so the three sit in one word plus a tag: a [`Session`] is the
+/// widest thing a compilation carries, and a match arm that never takes it
+/// should not pay for its size.
+pub(super) enum ClaimedRead {
+    /// A worker started it while an earlier recipe of the same parent was being
+    /// composed, and this is where the composition waits for it.
+    Started(Box<ChildRead>),
+    /// Nothing has read it, so the composition reads it here.
+    Unread(Box<(Session, CompilationContext)>),
+    /// An earlier pass read it over text that has not moved since, so that read
+    /// is this one. See [`super::CarriedRead`].
+    Repeated(Box<(super::CarriedRead, CompilationContext)>),
+}
+
+impl ClaimedRead {
+    /// Have this unit's read, from wherever it comes from.
+    ///
+    /// The three answer one question between them, which is why the choice is
+    /// made here rather than by the composition: a read is a read whether a
+    /// worker performed it, this thread performs it now, or a pass before this
+    /// one performed it over text that has not moved since.
+    pub(super) fn perform(
+        self,
+        reaper: Option<&Reaper>,
+        evaluation: kati::ninja::BuildEvaluation,
+        chains: bool,
+    ) -> (CompilationContext, Performed) {
+        let mut chained = Vec::new();
+        let (context, read, repeated) = match self {
+            Self::Started(read) => {
+                let (context, read) = read.collect(reaper);
+                let read = read.map(|read| {
+                    chained = read.chained;
+                    std::sync::Arc::new(std::sync::Mutex::new(read.prepared))
+                });
+                (context, read, false)
+            }
+            Self::Unread(unread) => {
+                let (session, context) = *unread;
+                let read = evaluate_unit(session, &context.directory, evaluation, chains)
+                    .map(|prepared| std::sync::Arc::new(std::sync::Mutex::new(prepared)));
+                (context, read, false)
+            }
+            Self::Repeated(carried) => {
+                let (read, context) = *carried;
+                (context, Ok(read), true)
+            }
+        };
+        (
+            context,
+            Performed {
+                read,
+                chained,
+                repeated,
+            },
+        )
+    }
+}
 
 /// Start reading the Makefiles of every recursive recipe of one unit, so that
 /// none of them is read on the thread that composes.

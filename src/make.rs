@@ -28,7 +28,7 @@ mod interrupts;
 mod layout;
 mod order;
 mod parallel;
-use parallel::{ChildUnit, ReadsAhead, evaluate_unit, read_ahead};
+use parallel::{ChildUnit, ReadsAhead, read_ahead};
 mod recipe;
 mod report;
 mod sink;
@@ -531,6 +531,24 @@ pub(crate) struct UnitJournal {
     /// [`kati::session::ReadSubstrate`], which says what is in it and why each
     /// part is safe to carry.
     substrate: Option<kati::session::ReadSubstrate>,
+    /// What that read PRODUCED. See [`CarriedRead`].
+    ///
+    /// A field of the journal rather than a record of its own, and that is the
+    /// whole of what makes it safe: a read may stand in for a later one exactly
+    /// where this journal may, since its premise IS this journal's premise —
+    /// the same makefile bytes and the same answers from the ground. One
+    /// lifetime, so there is no second one to keep in step. A journal is
+    /// dropped at a restart, where the text has moved and GNU Make reads it
+    /// again, and the read goes with it.
+    ///
+    /// `MAKE_RESTARTS` is the one thing a read is told that is in neither this
+    /// journal nor the unit's cache key — the same exposure the substrate above
+    /// has. Both paths that raise the count drop the journals first, so no
+    /// journal outlives the count it was recorded under.
+    ///
+    /// `None` for a read that must happen again whatever: one that refused a
+    /// Makefile, and one that went to the ground outside this journal.
+    read: Option<CarriedRead>,
 }
 
 /// Every unit's journal, keyed by cache key.
@@ -675,7 +693,7 @@ struct CompilationState<'a> {
 /// One unit's unexpanded recipes and everything expanding them will need,
 /// carried out of the closure that read the Makefile.
 type UnitRecipes = (
-    kati::eval::Evaluator,
+    CarriedRead,
     kati::ninja::DeferredRecipes,
     sink::CommandLayout,
     Vec<(Edge, kati::build_sink::DeferredRecipeId)>,
@@ -690,9 +708,9 @@ impl CompilationState<'_> {
     /// directory: where the recipes expand is recorded here, and entered again
     /// when one of them is asked for.
     fn retain(&mut self, recipes: Option<UnitRecipes>, directory: &std::path::Path) {
-        if let Some((session, deferred, layout, edges)) = recipes {
+        if let Some((read, deferred, layout, edges)) = recipes {
             self.pending_recipes
-                .admit(session, deferred, layout, directory.to_owned(), &edges);
+                .admit(read, deferred, layout, directory.to_owned(), &edges);
         }
     }
 
@@ -962,7 +980,7 @@ fn load_with_subninjas_unlocked(
 /// evaluator and the dependency nodes alone — see [`parallel::prepare_read`],
 /// which is the whole of what makes them, and which lives beside the read it
 /// belongs to rather than beside the emission it feeds.
-struct Prepared {
+pub(crate) struct Prepared {
     ev: kati::eval::Evaluator,
     /// The build the dependency nodes describe, walked and expanded as far as
     /// anything can be without a sink to hand it to. See
@@ -981,6 +999,28 @@ struct Prepared {
     flag_environment: [(OsString, Option<OsString>); 2],
 }
 
+/// One unit's read, held for as long as the invocation may compose that unit.
+///
+/// Everything in [`Prepared`] is a function of the makefile text and of what
+/// the ground told the read, and a staging pass repeating a read is handed
+/// both: the same bytes, and the same answers through
+/// [`kati::session::GroundJournal`]. So the statements, the dependency nodes
+/// and the populated build a repeat would compute are the ones the first read
+/// computed, and one value stands for every composition of that unit.
+///
+/// NOTHING HERE IS AN ANSWER ABOUT THE DISK AS IT STANDS. A staged build moves
+/// files between one pass and the next, and every question whose answer that
+/// movement changes — is this target out of date, is an enclosing unit's file
+/// on the ground, does the staged work start a process — lives on the far side
+/// of the sink, which each pass reaches through its own emission of this.
+///
+/// Shared rather than owned because the build holds it too: a recipe is
+/// expanded at launch against the variables the session that read it holds, so
+/// the evaluator has to be reachable from the pass's [`recipe::PendingRecipes`]
+/// and from the pass after it. Composing and building do not overlap, so the
+/// lock is never contended.
+pub(crate) type CarriedRead = std::sync::Arc<std::sync::Mutex<Prepared>>;
+
 /// One unit's makefile read, and the build it describes emitted into the sink.
 ///
 /// A function rather than a closure so the thing it produces has a name: the
@@ -990,25 +1030,29 @@ struct Prepared {
 /// `reaper` is where what the read no longer needs is freed. See
 /// [`parallel::Reaper`].
 fn read_unit(
-    prepared: Prepared,
+    prepared: &CarriedRead,
+    repeated: bool,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     enclosing: &std::sync::Arc<sink::Enclosing>,
     context: &CompilationContext,
     reaper: Option<&parallel::Reaper>,
 ) -> Result<UnitRead, MakeError> {
+    let mut held = prepared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Prepared {
-        mut ev,
+        ev,
         populated,
         recursions: _,
         refusals,
         regeneration_names,
         exported,
         unreadable,
-        command_line,
+        command_line: _,
         makeflags,
         flag_environment,
-    } = prepared;
+    } = &mut *held;
     if let Some(parent) = parent_scope {
         sink.begin_subninja(
             parent,
@@ -1030,7 +1074,7 @@ fn read_unit(
         .job_group
         .as_ref()
         .map_or(context.jobs, |(_, budget)| budget.get());
-    let budget = cli::makeflags_job_budget(&makeflags).unwrap_or(group_budget);
+    let budget = cli::makeflags_job_budget(makeflags).unwrap_or(group_budget);
     let job_group = sink.hold_unit_jobs(
         ev.session.flags.not_parallel,
         context.job_group.clone(),
@@ -1039,13 +1083,13 @@ fn read_unit(
             .flatten(),
     );
     let mut recipe_environment = context.recipe_environment.clone();
-    apply_recipe_environment(&mut recipe_environment, &flag_environment);
-    apply_recipe_environment(&mut recipe_environment, &exported);
+    apply_recipe_environment(&mut recipe_environment, flag_environment);
+    apply_recipe_environment(&mut recipe_environment, exported);
     sink.set_recipe_environment(
         recipe_environment,
         unreadable.as_ref().map(|held| held.why.clone()),
     );
-    let deferred = match emit_populated(populated, &mut ev, sink) {
+    let deferred = match emit_populated(populated, ev, sink) {
         Ok(deferred) => deferred,
         Err(error) => {
             if let Some(failure) = sink.construction_failure() {
@@ -1058,38 +1102,70 @@ fn read_unit(
     // what wraps every command this unit produces, and a recipe expanded
     // later has to be wrapped in exactly the same thing.
     let layout = sink.layout();
-    let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusals)?;
+    let refused = !refusals.is_empty();
+    let unit_remakes = unit_remakes(
+        sink,
+        &ev.session,
+        regeneration_names,
+        std::mem::take(refusals),
+    )?;
     let unit = sink.take_unit();
-    ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-    // Taken before the session goes wherever it goes next: the recipes may
-    // keep it alive for the build and may not, and either way this read is
-    // over and what it was told belongs to the pass.
-    let journal = UnitJournal {
-        ground: ev.session.ground_journal.close_read(),
-        sources: ev.session.read_sources(),
-        // Must stay ahead of any recipe expansion of this unit: what an
-        // expansion mints belongs to the build rather than to the text, and
-        // carrying it moves the ordinal of a name a later read mints for
-        // itself. See [`kati::session::Session::read_substrate`].
-        substrate: Some(ev.session.read_substrate()),
-    };
-    let (deferred_edges, settled_edges) = sink.take_late_edges();
-    // A unit with nothing left to expand has no further use for the session
-    // that read it, and that session is the whole of what the read built:
-    // its symbol table, its variables, and every expression they parsed to.
-    let pending_recipes = if deferred.is_empty() {
-        parallel::discard(reaper, (ev, layout));
+    // A repeat has neither to do, and closing again would undo both: the trace
+    // file belongs to the read that opened it, and the journal a repeat holds
+    // is the one it was handed, which closing empties.
+    let journal = if repeated {
         None
     } else {
-        Some((ev, deferred, layout, deferred_edges))
+        ev.finish().map_err(|error| MakeError::evaluate(&error))?;
+        let asked_off_journal = ev.session.ground_journal.asked_off_journal();
+        // Taken before the session goes wherever it goes next: the recipes may
+        // keep it alive for the build and may not, and either way this read is
+        // over and what it was told belongs to the pass.
+        Some(UnitJournal {
+            ground: ev.session.ground_journal.close_read(),
+            sources: ev.session.read_sources(),
+            // Must stay ahead of any recipe expansion of this unit: what an
+            // expansion mints belongs to the build rather than to the text, and
+            // carrying it moves the ordinal of a name a later read mints for
+            // itself. See [`kati::session::Session::read_substrate`].
+            substrate: Some(ev.session.read_substrate()),
+            // Two reads may not stand in for a later one.
+            //
+            // ONE THAT REFUSED A MAKEFILE: the refusal is what the run ends on
+            // or what a rule remakes and restarts over, so no later pass is a
+            // repeat of this read, and the refusals were taken out of it above.
+            //
+            // ONE THAT WENT TO THE GROUND OUTSIDE ITS JOURNAL, which is a
+            // recipe expanded while the graph was built — `$(MAKE) child
+            // VALUE=$(shell cat stamp)`, whose `stamp` is the very thing the
+            // boundary is staged for. That expansion is suspended from the
+            // journal so the pass past the staging gets the answer the ground
+            // has then; a read held whole would hold the answer from before it
+            // and ask nothing. See
+            // [`kati::session::GroundJournal::asked_off_journal`].
+            read: (!refused && !asked_off_journal).then(|| std::sync::Arc::clone(prepared)),
+        })
+    };
+    drop(held);
+    let (deferred_edges, settled_edges) = sink.take_late_edges();
+    // A unit with nothing left to expand has nothing for the build to ask the
+    // read about. Only the layout is freed: it is this pass's own, while the
+    // read belongs to the invocation.
+    let pending_recipes = if deferred.is_empty() {
+        parallel::discard(reaper, layout);
+        None
+    } else {
+        Some((
+            std::sync::Arc::clone(prepared),
+            deferred,
+            layout,
+            deferred_edges,
+        ))
     };
     Ok(UnitRead {
         unit,
-        exported,
-        command_line,
+        read: std::sync::Arc::clone(prepared),
         unit_remakes,
-        makeflags,
-        flag_environment,
         pending_recipes,
         settled_edges,
         journal,
@@ -1101,18 +1177,19 @@ fn read_unit(
 /// What reading one unit settled.
 struct UnitRead {
     unit: UnitOutput,
-    exported: Vec<(OsString, Option<OsString>)>,
-    command_line: Vec<(OsString, Option<OsString>)>,
+    /// The read itself, which is where the environment this unit's children
+    /// inherit comes from. Held rather than copied out of: the composition only
+    /// ever looks at those four values.
+    read: CarriedRead,
     unit_remakes: UnitRemakes,
-    makeflags: String,
-    flag_environment: [(OsString, Option<OsString>); 2],
     pending_recipes: Option<UnitRecipes>,
     /// Edges whose recipe this read expanded for itself and which still run a
     /// process per command line.
     settled_edges: Vec<(Edge, sink::SettledSteps)>,
     /// What this read was told from outside itself, for the read that repeats
-    /// it.
-    journal: UnitJournal,
+    /// it. `None` where this read IS the repeat: the journal it would record is
+    /// the one it was handed.
+    journal: Option<UnitJournal>,
     /// The job group this unit ended up in, which its children join.
     job_group: Option<(Vec<u8>, std::num::NonZeroUsize)>,
     /// How many of this unit's own recipes may run at once.
@@ -1130,7 +1207,7 @@ fn compile_unit(
     // Where the composition stands, which is what the reads this unit starts
     // for its own children are ordered by. See [`parallel::ReadOrder`].
     let order = child.read_order();
-    let (compilation_key, read_ahead) = child.claim(state)?;
+    let (compilation_key, claimed) = child.claim(state)?;
     if !state.compiling.insert(compilation_key.clone()) {
         return Err(MakeError::Evaluate(
             "recursive Make compilation includes itself".to_owned(),
@@ -1148,43 +1225,29 @@ fn compile_unit(
         .and_then(Option::as_ref)
         .map(std::sync::Arc::clone);
     let reaper = pool.as_deref().and_then(parallel::ReadPool::reaper);
-    // What a worker read ahead for the children of THIS unit while it was
-    // reading this unit, which the composition below adopts rather than
-    // resolving and reading again. Empty where nothing read ahead.
-    let mut chained = Vec::new();
-    let (context, evaluated) = match read_ahead {
-        Ok(read) => {
-            let (context, read) = read.collect(reaper);
-            (
-                context,
-                read.map(|read| {
-                    chained = read.chained;
-                    read.prepared
-                }),
-            )
-        }
-        Err((session, context)) => {
-            let evaluated = evaluate_unit(
-                session,
-                &context.directory,
-                state.evaluation,
-                state.read_threads >= 2,
-            );
-            (context, evaluated)
-        }
-    };
+    let (context, performed) = claimed.perform(reaper, state.evaluation, state.read_threads >= 2);
+    let parallel::Performed {
+        read: evaluated,
+        chained,
+        repeated,
+    } = performed;
     let read = evaluated.and_then(|evaluated| {
         in_directory(&context.directory, || {
-            read_unit(evaluated, sink, parent_scope, enclosing, &context, reaper)
+            read_unit(
+                &evaluated,
+                repeated,
+                sink,
+                parent_scope,
+                enclosing,
+                &context,
+                reaper,
+            )
         })
     });
     let UnitRead {
         unit,
-        exported,
-        command_line,
+        read,
         unit_remakes,
-        makeflags,
-        flag_environment,
         pending_recipes,
         settled_edges,
         journal,
@@ -1201,7 +1264,9 @@ fn compile_unit(
     // opened to, because a unit held to its own pool can still only run as many
     // commands at once as the scheduler will start.
     state.job_budget = state.job_budget.max(job_budget);
-    state.units_read.insert(compilation_key.clone(), journal);
+    if let Some(journal) = journal {
+        state.units_read.insert(compilation_key.clone(), journal);
+    }
     state.retain(pending_recipes, &context.directory);
     state.pending_recipes.admit_settled(settled_edges);
     state.admit(unit_remakes);
@@ -1212,15 +1277,20 @@ fn compile_unit(
     // unit, and the files this unit itself makes.
     descendant_context.enclosing =
         enclosing::for_children(enclosing, std::mem::take(&mut unit.generated));
-    descendant_context.makeflags.clone_from(&makeflags);
     descendant_context.job_group = job_group;
-    apply_exported_environment(&mut descendant_context.environment, &command_line);
-    apply_exported_environment(&mut descendant_context.environment, &exported);
+    let held = read
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    descendant_context.makeflags.clone_from(&held.makeflags);
+    apply_exported_environment(&mut descendant_context.environment, &held.command_line);
+    apply_exported_environment(&mut descendant_context.environment, &held.exported);
     apply_recipe_environment(
         &mut descendant_context.recipe_environment,
-        &flag_environment,
+        &held.flag_environment,
     );
-    apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
+    apply_recipe_environment(&mut descendant_context.recipe_environment, &held.exported);
+    let makeflags = held.makeflags.clone();
+    drop(held);
     let composed = compose_subninjas(
         unit,
         &compilation_key,

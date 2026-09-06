@@ -13,6 +13,7 @@
 //! unexpanded stay unexpanded — the compiler still reads the ones whose text
 //! shapes the graph — and the engine asks for one as it launches its edge.
 
+use super::CarriedRead;
 use super::layout::Script;
 use super::sink::{CommandLayout, SettledSteps};
 use crate::build::{LateBinding, LateCommand, LateCommands, LateStep};
@@ -20,14 +21,14 @@ use crate::graph::EdgeId;
 use crate::htab::RapidHashMap;
 use crate::util::BString;
 use kati::build_sink::DeferredRecipeId;
-use kati::eval::Evaluator;
 use kati::ninja::DeferredRecipes as KatiRecipes;
 use std::path::{Path, PathBuf};
 
 /// One compilation unit's unexpanded recipes, and everything expanding one of
 /// them needs that the recipe itself does not carry.
 struct RecipeUnit {
-    /// The evaluation session that read this unit's Makefile.
+    /// The read this unit's Makefile settled, whose evaluator holds the
+    /// variables.
     ///
     /// A recipe is expanded against the variables that session holds, which is
     /// the whole reason the session outlives compilation: an expansion against
@@ -35,8 +36,12 @@ struct RecipeUnit {
     /// child has a session of its own, read from its own Makefile with its own
     /// `MAKEFLAGS` and its own exports, so it is retained beside the root's
     /// rather than folded into it.
+    ///
+    /// Shared with the compilation rather than taken from it, because a staging
+    /// pass repeats this read and the pass after this one expands the same
+    /// recipes against the same variables. See [`super::CarriedRead`].
     // [spec:ronin:req:make.no-ambient-state]
-    session: Evaluator,
+    read: CarriedRead,
     recipes: KatiRecipes,
     layout: CommandLayout,
     /// Where this unit's Makefile was read, and so where its recipes expand.
@@ -122,7 +127,7 @@ impl PendingRecipes {
     /// the edge that runs each one.
     pub(crate) fn admit(
         &mut self,
-        session: Evaluator,
+        read: CarriedRead,
         recipes: KatiRecipes,
         layout: CommandLayout,
         directory: PathBuf,
@@ -130,7 +135,7 @@ impl PendingRecipes {
     ) {
         let unit = self.units.len();
         self.units.push(RecipeUnit {
-            session,
+            read,
             recipes,
             layout,
             directory,
@@ -231,16 +236,23 @@ impl LateCommands for PendingRecipes {
             });
         };
         let RecipeUnit {
-            session,
+            read,
             recipes,
             layout,
             directory,
         } = &mut self.units[unit];
+        // A poisoned read is one an expansion panicked inside. The variables
+        // are the variables either way, and refusing to expand here would turn
+        // one recipe's failure into a build that cannot say what went wrong.
+        let mut held = read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let expanded = expanded_in(directory, || {
             recipes
-                .expand(session, recipe, trigger, settled, Some(new_inputs))
+                .expand(&mut held.ev, recipe, trigger, settled, Some(new_inputs))
                 .map_err(|failure| super::report::diagnostic_body(&failure))
         })?;
+        drop(held);
         let Some(expanded) = expanded else {
             return Ok(LateBinding::Settled);
         };
