@@ -2088,36 +2088,10 @@ impl<'a> Builder<'a> {
         edge: EdgeId,
         result: BuildResult<(bool, Vec<NodeId>)>,
     ) -> BuildResult<()> {
-        match result {
-            Ok((pruned, loaded_dyndeps)) => {
-                if pruned {
-                    self.recompute_consumers_after_restat(edge)?;
-                }
-                if !loaded_dyndeps.is_empty() {
-                    self.recompute_planned_after_dyndep(&loaded_dyndeps)?;
-                    self.plan.refresh_dependencies(self.graph, &self.runtime)?;
-                }
-                let pruned = self.plan.edge_finished(
-                    self.graph,
-                    &self.runtime,
-                    edge,
-                    EdgeResult::Succeeded,
-                )?;
-                status::forget_pruned_work(
-                    &mut self.progress,
-                    self.graph,
-                    self.build_log.as_deref(),
-                    &pruned,
-                );
-                Ok(())
-            }
-            Err(error) => {
-                self.failed_edges.insert(edge);
-                self.plan
-                    .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Failed)?;
-                Err(error)
-            }
+        if matches!(result, Ok((true, _))) {
+            self.recompute_consumers_after_restat(std::slice::from_ref(&edge))?;
         }
+        self.finish_settled_edge(edge, result)
     }
 
     // [spec:ronin:req:compat.scheduling]
@@ -2248,107 +2222,139 @@ impl<'a> Builder<'a> {
                 break;
             }
             let maxjobs = self.job_limit(&mut load);
-            while !console_running && processes.running_len() < maxjobs && failures < failure_limit
-            {
-                let Some(edge) = self.plan.find_work(self.graph) else {
-                    break;
-                };
-                if !self.advance_deferred(edge, &mut failures, failure_limit, &mut last_error) {
-                    if failures >= failure_limit {
+            // A recipe-less edge is settled with every other one the plan had
+            // ready beside it rather than on its own, so that what they prune
+            // is propagated in one walk. See [`Self::settle_wave`]. Work with a
+            // command closes the wave and is held for the round after it, so
+            // that nothing is launched against a plan the wave has yet to
+            // settle.
+            let mut settling = Wave::new();
+            loop {
+                while !console_running
+                    && processes.running_len() < maxjobs
+                    && failures < failure_limit
+                {
+                    let Some(edge) = self.plan.find_work(self.graph) else {
                         break;
-                    }
-                    continue;
-                }
-                let is_phony = self.graph.is_phony_rule(self.graph.edge(edge).rule);
-                if is_phony {
-                    let result = self.finish_phony_edge(edge);
-                    if let Err(error) = self.settle_edge(edge, result) {
-                        failures += 1;
-                        last_error = Some(error);
-                    }
-                    continue;
-                }
-                let use_console = self.graph.is_console_pool(self.graph.edge(edge).pool);
-                if use_console && processes.running_len() != 0 {
-                    self.plan.defer_work(self.graph, edge);
-                    break;
-                }
-                let slot = if let Some(client) = jobserver.as_mut() {
-                    // The implicit slot first, because it is the one slot that
-                    // costs the shared budget nothing. Only past it does a
-                    // command of Ronin's own take capacity a child could have.
-                    let held = match available_slot
-                        .take()
-                        .or_else(|| client.try_acquire_implicit())
-                    {
-                        Some(slot) => Some(slot),
-                        None => client.try_acquire_token()?,
                     };
-                    if let Some(slot) = held {
-                        Some(slot)
-                    } else {
+                    if !self.advance_deferred(
+                        edge,
+                        &mut settling,
+                        &mut failures,
+                        failure_limit,
+                        &mut last_error,
+                    ) {
+                        if failures >= failure_limit {
+                            break;
+                        }
+                        continue;
+                    }
+                    let is_phony = self.graph.is_phony_rule(self.graph.edge(edge).rule);
+                    if is_phony {
+                        let result = self.finish_phony_edge(edge);
+                        settling.push((edge, result));
+                        continue;
+                    }
+                    if !settling.is_empty() {
+                        // Held back rather than started ahead of the wave, so that
+                        // a command is launched against the plan the wave leaves.
                         self.plan.defer_work(self.graph, edge);
-                        client.request_token();
-                        starved = true;
                         break;
                     }
-                } else {
-                    None
-                };
-                match self.prepare_edge(edge) {
-                    // The recipe was read as the edge was launched and held no
-                    // command line. Nothing runs, nothing is reported, and the
-                    // count of work loses the edge that turned out not to be
-                    // any — the same accounting a deferred edge gets when its
-                    // freshness test comes out negative.
-                    Ok(None) => {
-                        if let Some(slot) = slot {
-                            slot.release();
-                        }
-                        if !self.settle_unrun_edge(
-                            edge,
-                            &mut failures,
-                            failure_limit,
-                            &mut last_error,
-                        ) {
+                    let use_console = self.graph.is_console_pool(self.graph.edge(edge).pool);
+                    if use_console && processes.running_len() != 0 {
+                        self.plan.defer_work(self.graph, edge);
+                        break;
+                    }
+                    let slot = if let Some(client) = jobserver.as_mut() {
+                        // The implicit slot first, because it is the one slot that
+                        // costs the shared budget nothing. Only past it does a
+                        // command of Ronin's own take capacity a child could have.
+                        let held = match available_slot
+                            .take()
+                            .or_else(|| client.try_acquire_implicit())
+                        {
+                            Some(slot) => Some(slot),
+                            None => client.try_acquire_token()?,
+                        };
+                        if let Some(slot) = held {
+                            Some(slot)
+                        } else {
+                            self.plan.defer_work(self.graph, edge);
+                            client.request_token();
+                            starved = true;
                             break;
                         }
-                    }
-                    Ok(Some(mut prepared)) => {
-                        let (launch, pretended) = Self::take_step(&mut prepared, self.pretending());
-                        // The launch is taken, not made: a command that could
-                        // not be started reports that as its own completion,
-                        // which is where the slot is given back and the edge
-                        // settled. See `ProcessSupervisor::spawn`.
-                        processes.spawn(edge, launch, use_console, pretended);
-                        running[edge.index()] = Some(prepared);
-                        running_slots[edge.index()] = slot;
-                        console_running = use_console;
-                        if use_console {
-                            break;
+                    } else {
+                        None
+                    };
+                    match self.prepare_edge(edge) {
+                        // The recipe was read as the edge was launched and held no
+                        // command line. Nothing runs, nothing is reported, and the
+                        // count of work loses the edge that turned out not to be
+                        // any — the same accounting a deferred edge gets when its
+                        // freshness test comes out negative.
+                        Ok(None) => {
+                            if let Some(slot) = slot {
+                                slot.release();
+                            }
+                            if !self.settle_unrun_edge(
+                                edge,
+                                &mut failures,
+                                failure_limit,
+                                &mut last_error,
+                            ) {
+                                break;
+                            }
+                        }
+                        Ok(Some(mut prepared)) => {
+                            let (launch, pretended) =
+                                Self::take_step(&mut prepared, self.pretending());
+                            // The launch is taken, not made: a command that could
+                            // not be started reports that as its own completion,
+                            // which is where the slot is given back and the edge
+                            // settled. See `ProcessSupervisor::spawn`.
+                            processes.spawn(edge, launch, use_console, pretended);
+                            running[edge.index()] = Some(prepared);
+                            running_slots[edge.index()] = slot;
+                            console_running = use_console;
+                            if use_console {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            if let Some(slot) = slot {
+                                slot.release();
+                            }
+                            self.failed_edges.insert(edge);
+                            self.plan.edge_finished(
+                                self.graph,
+                                &self.runtime,
+                                edge,
+                                EdgeResult::Failed,
+                            )?;
+                            // An edge that could not be started ends the build
+                            // whatever `-k` still allowed: Ninja leaves its build
+                            // loop the moment `StartEdge` fails, without asking
+                            // how many failures were permitted. The allowance is
+                            // about commands that ran and said no; nothing ran
+                            // here, and the manifest asked for something the disk
+                            // will refuse just as firmly for every edge after it.
+                            failures = failure_limit;
+                            last_error = Some(error);
                         }
                     }
-                    Err(error) => {
-                        if let Some(slot) = slot {
-                            slot.release();
-                        }
-                        self.failed_edges.insert(edge);
-                        self.plan.edge_finished(
-                            self.graph,
-                            &self.runtime,
-                            edge,
-                            EdgeResult::Failed,
-                        )?;
-                        // An edge that could not be started ends the build
-                        // whatever `-k` still allowed: Ninja leaves its build
-                        // loop the moment `StartEdge` fails, without asking
-                        // how many failures were permitted. The allowance is
-                        // about commands that ran and said no; nothing ran
-                        // here, and the manifest asked for something the disk
-                        // will refuse just as firmly for every edge after it.
-                        failures = failure_limit;
-                        last_error = Some(error);
-                    }
+                }
+                if settling.is_empty() {
+                    break;
+                }
+                self.settle_wave(
+                    std::mem::take(&mut settling),
+                    &mut failures,
+                    &mut last_error,
+                );
+                if failures >= failure_limit {
+                    break;
                 }
             }
 
@@ -2472,6 +2478,7 @@ mod release;
 mod settle;
 use command::Runs;
 pub(crate) use command::{LateBinding, LateCommand, LateCommands, LateStep};
+use settle::Wave;
 mod deferred;
 mod freshness;
 mod reporter;

@@ -572,6 +572,7 @@ impl Builder<'_> {
     pub(super) fn advance_deferred(
         &mut self,
         edge: EdgeId,
+        wave: &mut super::Wave,
         failures: &mut usize,
         failure_limit: usize,
         last_error: &mut Option<BuildError>,
@@ -580,13 +581,14 @@ impl Builder<'_> {
             DeferredWork::Skip => {
                 self.forget_unrun_edge(edge);
                 let result = self.finish_without_command(edge, Unrun::Skipped);
-                if let Err(error) = self.settle_edge(edge, result) {
-                    *failures += 1;
-                    *last_error = Some(error);
-                }
+                wave.push((edge, result));
                 false
             }
             DeferredWork::Activate(roots) => {
+                // The wave stands between the plan as it is and the plan the
+                // scan below reads, so it is settled before the scan and not
+                // after it.
+                self.settle_wave(std::mem::take(wave), failures, last_error);
                 self.plan.defer_work(self.graph, edge);
                 let activated = (|| -> BuildResult<()> {
                     for root in roots {
@@ -605,10 +607,7 @@ impl Builder<'_> {
             }
             DeferredWork::Run if self.graph.is_phony_rule(self.graph.edge(edge).rule) => {
                 let result = self.finish_without_command(edge, Unrun::Phony);
-                if let Err(error) = self.settle_edge(edge, result) {
-                    *failures += 1;
-                    *last_error = Some(error);
-                }
+                wave.push((edge, result));
                 false
             }
             DeferredWork::Ordinary | DeferredWork::Run => true,
