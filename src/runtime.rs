@@ -263,6 +263,22 @@ pub(crate) struct RuntimeState {
     nodes: Vec<NodeRuntime>,
     node_flags: Vec<NodeFlags>,
     edges: Vec<EdgeRuntime>,
+    /// What the ground said about each name, for a caller that scans one graph
+    /// repeatedly over a disk that has not moved between the scans.
+    ///
+    /// Held apart from [`NodeRuntime::mtime`] because the scan writes over that
+    /// one — a phony output stands in its inputs' date, a file the graph is
+    /// allowed not to have stands in the newest date behind it — so what the
+    /// syscall answered is gone by the time the scan is over. This is the
+    /// syscall's answer and nothing else writes it.
+    ///
+    /// Empty unless a caller has asked for one by resetting through
+    /// [`Self::reset_asked_as_of`]; a build's own state never fills it and
+    /// never reads it.
+    observed: Vec<FileTime>,
+    /// When the answers in `observed` were taken, or `None` where there are
+    /// none to keep. See [`Self::reset_asked_as_of`].
+    observed_as_of: Option<u64>,
     deferred: crate::htab::RapidHashMap<EdgeId, DeferredRuntime>,
     /// Whether this scan is answering GNU Make's `-B`: every edge that has a
     /// command is out of date and every prerequisite counts as changed,
@@ -323,18 +339,66 @@ impl RuntimeState {
     }
 
     /// Exactly what [`Self::new`] would have made, in the allocations this one
-    /// already holds.
+    /// already holds, keeping what the ground has already told it where `as_of`
+    /// says the ground has not moved since it answered.
     ///
     /// [`Self::reset`] deliberately keeps what a scan was ASKED — `-B`, `-W`,
     /// `-o` — because one state answers a graph twice under different switches
     /// and the answer belongs to the scan rather than to the graph. A caller
     /// recycling one state across scans that were asked DIFFERENT things wants
-    /// none of that carried over, and a fresh state carries none.
-    pub(crate) fn reset_asked(&mut self, graph: &Graph) {
+    /// none of that carried over, and this carries none.
+    ///
+    /// A scan learns two different kinds of thing and `as_of` separates them.
+    /// What it works out — which nodes are dirty, which dates propagated where
+    /// — is about the graph it was run over, and a scan over a graph that has
+    /// since grown has to work it out again, so that is cleared. What the
+    /// ground TOLD it is about the disk, and a disk that has not
+    /// moved gives the same answers to the same questions. Keeping those is
+    /// worth having because a Make composition scans one graph once per
+    /// recursive recipe and the scans overlap almost entirely: zsh's
+    /// incremental build asks about 999 names 62,809 times across its 1,031
+    /// scans, where GNU Make stats 2,253 times for the whole run.
+    ///
+    /// `as_of` is the caller's word that the ground has not moved, carried as a
+    /// counter rather than a flag so that the answer is dropped when it has:
+    /// answers taken under one value are kept only for a scan asking under the
+    /// same one. `None` is a caller that cannot say, and then nothing is kept
+    /// and nothing is recorded; a build's own scans reset that way and are
+    /// never answered from a kept date.
+    pub(crate) fn reset_asked_as_of(&mut self, graph: &Graph, as_of: Option<u64>) {
         self.always_make = false;
         self.assumed_new = AssumedNodes::default();
         self.assumed_old = AssumedNodes::default();
         self.reset(graph);
+        if as_of.is_some() && as_of == self.observed_as_of {
+            self.observed
+                .resize(graph.node_ids().len(), FileTime::UNOBSERVED);
+            return;
+        }
+        self.observed_as_of = as_of;
+        self.observed.clear();
+        if as_of.is_some() {
+            self.observed
+                .resize(graph.node_ids().len(), FileTime::UNOBSERVED);
+        }
+    }
+
+    /// What the ground last said about `node`, where this state is keeping such
+    /// answers and the ground has not moved since. See
+    /// [`Self::reset_asked_as_of`].
+    pub(crate) fn ground_answer(&self, node: NodeId) -> Option<FileTime> {
+        self.observed
+            .get(node.index())
+            .copied()
+            .filter(|answer| answer.is_observed())
+    }
+
+    /// Keep what the ground just said about `node`, where this state is keeping
+    /// such answers. Nothing else writes them.
+    pub(crate) fn keep_ground_answer(&mut self, node: NodeId, answer: FileTime) {
+        if let Some(held) = self.observed.get_mut(node.index()) {
+            *held = answer;
+        }
     }
 
     pub(crate) fn reset(&mut self, graph: &Graph) {
@@ -460,6 +524,57 @@ mod tests {
         assert!(flags.intermediate_pending());
         assert!(flags.dirty());
         assert!(flags.dyndep_pending());
+    }
+
+    /// A scan that says the ground has not moved is answered from what the
+    /// ground already said, and one that says nothing asks again. The counter
+    /// is what tells the two apart, so a scan under a NEW value has to lose
+    /// every answer taken under the old one — that is the whole of the rule a
+    /// staged build depends on.
+    #[test]
+    fn a_moved_ground_loses_what_it_said() {
+        let mut graph = Graph::default();
+        let node = mknode(&mut graph, BString::from("out"));
+        let mut runtime = RuntimeState::default();
+
+        // Nothing kept until a caller asks for it: the build's own scans reset
+        // with no counter and must never be answered from a kept date.
+        runtime.reset_asked_as_of(&graph, None);
+        runtime.keep_ground_answer(node, FileTime::observed(7));
+        assert_eq!(runtime.ground_answer(node), None);
+
+        runtime.reset_asked_as_of(&graph, Some(3));
+        assert_eq!(runtime.ground_answer(node), None);
+        runtime.keep_ground_answer(node, FileTime::observed(7));
+        assert_eq!(runtime.ground_answer(node), Some(FileTime::observed(7)));
+
+        // The same counter is the same ground, so the answer stands.
+        runtime.reset_asked_as_of(&graph, Some(3));
+        assert_eq!(runtime.ground_answer(node), Some(FileTime::observed(7)));
+
+        // A new one is a ground that has moved, and the answer goes with it.
+        runtime.reset_asked_as_of(&graph, Some(4));
+        assert_eq!(runtime.ground_answer(node), None);
+    }
+
+    /// What the scan works out is cleared by a reset that keeps the ground's
+    /// answers, because the two are different questions: a graph that has
+    /// grown since is a graph whose dirtiness has to be worked out again, and
+    /// only what the syscall said may outlive it.
+    #[test]
+    fn a_kept_answer_clears_the_scan() {
+        let mut graph = Graph::default();
+        let node = mknode(&mut graph, BString::from("out"));
+        let mut runtime = RuntimeState::default();
+        runtime.reset_asked_as_of(&graph, Some(1));
+        runtime.keep_ground_answer(node, FileTime::observed(7));
+        runtime.observe(node, FileTime::observed(7));
+        runtime.flags_mut(node).set_dirty(true);
+
+        runtime.reset_asked_as_of(&graph, Some(1));
+        assert!(!runtime.flags(node).dirty());
+        assert!(runtime.node(node).mtime().is_unobserved());
+        assert_eq!(runtime.ground_answer(node), Some(FileTime::observed(7)));
     }
 
     /// The absence answer means the syscall and not the scan, which is why the

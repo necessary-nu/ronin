@@ -514,6 +514,23 @@ where
         runtime.observe(node, FileTime::MISSING);
         return Ok(());
     }
+    // What this state was already told, where it is keeping such answers and
+    // the ground has not moved since. `elsewhere_mtime` is pure over the graph,
+    // the node and the two syscalls it makes, so one kept answer stands for the
+    // whole of what is skipped here. See [`RuntimeState::reset_asked_as_of`].
+    //
+    // Except for a name the graph gives a SECOND place to look. That spelling
+    // is written as the graph is emitted, which can fall between two scans of
+    // one name: the earlier scan asks about one path and the later one about
+    // two, so a kept answer there answers a different question rather than
+    // answering the same one staler. Asked of the graph rather than
+    // remembered, because it is the graph in hand that decides how many places
+    // there are.
+    let searched_elsewhere = graph.searched_at(node).is_some();
+    if !searched_elsewhere && let Some(kept) = runtime.ground_answer(node) {
+        runtime.observe(node, kept);
+        return Ok(());
+    }
     // Borrow the interned path for the syscall; only the error path needs an
     // owned copy, and scans stat every node.
     let path = graph.node_path(node);
@@ -525,6 +542,9 @@ where
         }
     })?;
     let mtime = elsewhere_mtime(graph, node, mtime, stat)?;
+    if !searched_elsewhere {
+        runtime.keep_ground_answer(node, FileTime::observed(mtime));
+    }
     runtime.observe(node, FileTime::observed(mtime));
     Ok(())
 }

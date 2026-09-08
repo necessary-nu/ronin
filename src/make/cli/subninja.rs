@@ -105,6 +105,10 @@ pub(in crate::make) fn compile(
             interrupts: std::sync::Arc::clone(&parent.interrupts),
             census: std::sync::Arc::clone(&parent.census),
             scripts: std::sync::Arc::clone(&parent.scripts),
+            // One count for the whole compilation: an evaluation anywhere in it
+            // moves the ground for every unit's freshness scan, not only for
+            // the unit that ran it.
+            ground: std::sync::Arc::clone(&parent.ground),
             reporting: parent.reporting,
             root_directory: parent.root_directory.clone(),
             directory,

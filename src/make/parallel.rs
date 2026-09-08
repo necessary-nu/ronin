@@ -110,6 +110,71 @@ pub(crate) static READS_STARTED: std::sync::atomic::AtomicUsize =
 pub(crate) static CHAINED_READS_STARTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
+/// Whether an evaluation has run, or is running, since the ground was asked.
+///
+/// A composition asks the ground the same questions over and over. Every
+/// recursive recipe takes a freshness scan of its own, each scan clears the
+/// runtime and re-walks a closure that overlaps every other scan's, and every
+/// name in that closure is stat'ed again: zsh's incremental build asks about
+/// 999 names 62,809 times across 1,031 scans, where GNU Make makes 2,253 stats
+/// for the whole run. The answers are kept between scans instead, and this is
+/// what says when keeping one would be a lie.
+///
+/// Only an evaluation can move the ground while a pass composes. Staged work
+/// runs BETWEEN passes and a recipe is expanded and launched by the build, so
+/// neither is running while a scan is taken; an evaluation is, and it writes
+/// through `$(shell)` and `$(file >)`. So the count is kept where evaluation
+/// happens — [`evaluate_unit`] and nowhere else — which makes it structural
+/// rather than a list of writers somebody has to keep up to date.
+///
+/// Two numbers rather than one, because an evaluation that HAS run and one that
+/// IS running want different answers. A finished one moves `written` on, and a
+/// scan asking under the new value keeps nothing taken under the old. A running
+/// one is another thread writing while this one reads, so [`Self::as_of`]
+/// declines to answer at all and the scan asks the ground for every name.
+#[derive(Default)]
+pub(crate) struct GroundEpoch {
+    /// Bumped as each evaluation finishes.
+    written: std::sync::atomic::AtomicU64,
+    /// How many evaluations have started and not finished.
+    running: std::sync::atomic::AtomicU64,
+}
+
+impl GroundEpoch {
+    /// What to stamp this scan's ground answers with, or `None` while an
+    /// evaluation is running and no answer may be kept.
+    pub(crate) fn as_of(&self) -> Option<u64> {
+        use std::sync::atomic::Ordering;
+        // `running` first. A finishing evaluation bumps `written` and then
+        // drops `running`, both releasing, so a reader that has seen `running`
+        // reach zero has also seen the bump that went with it.
+        (self.running.load(Ordering::Acquire) == 0).then(|| self.written.load(Ordering::Acquire))
+    }
+
+    /// Run `evaluate`, which may write to the ground.
+    fn evaluating<T>(&self, evaluate: impl FnOnce() -> T) -> T {
+        self.running
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        // Finished on the way out however the evaluation left, because a read
+        // that raised is still a read that may have written before it did.
+        let _finished = Evaluating(self);
+        evaluate()
+    }
+}
+
+/// One evaluation's place in [`GroundEpoch`], given back when it ends.
+struct Evaluating<'a>(&'a GroundEpoch);
+
+impl Drop for Evaluating<'_> {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        // The count moves before the running total drops, so a scan that has
+        // seen the total reach zero has seen the move that went with it.
+        self.0.written.fetch_add(1, Ordering::Release);
+        self.0.running.fetch_sub(1, Ordering::Release);
+    }
+}
+
 /// Give this thread its own working directory, root and umask.
 ///
 /// `unshare` is deprecated in rustix in favour of an `unsafe` spelling, and the
@@ -762,13 +827,16 @@ fn evaluate_unit(
     directory: &std::path::Path,
     evaluation: kati::ninja::BuildEvaluation,
     chains: bool,
+    ground: &GroundEpoch,
 ) -> Result<Prepared, MakeError> {
-    in_directory(directory, || {
-        prepare_read(
-            evaluate(session).map_err(|error| MakeError::evaluate(&error))?,
-            evaluation,
-            chains,
-        )
+    ground.evaluating(|| {
+        in_directory(directory, || {
+            prepare_read(
+                evaluate(session).map_err(|error| MakeError::evaluate(&error))?,
+                evaluation,
+                chains,
+            )
+        })
     })
 }
 
@@ -1011,28 +1079,33 @@ impl ChildRead {
             evaluation,
             order: _,
         } = self;
-        let read =
-            if let Ok(Some(read)) = answer.recv() {
-                read
-            } else {
-                // No worker read it. The session was left where either side could
-                // take it for exactly this, so the read happens here instead — and
-                // nothing was read ahead for its children either.
-                let taken = unread
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .take();
-                match taken {
-                    Some(session) => evaluate_unit(session, &context.directory, evaluation, false)
-                        .map(|prepared| ReadAhead {
-                            prepared,
-                            chained: Vec::new(),
-                        }),
-                    None => Err(MakeError::Evaluate(
-                        "reading a recursive Make child was abandoned".to_owned(),
-                    )),
-                }
-            };
+        let read = if let Ok(Some(read)) = answer.recv() {
+            read
+        } else {
+            // No worker read it. The session was left where either side could
+            // take it for exactly this, so the read happens here instead — and
+            // nothing was read ahead for its children either.
+            let taken = unread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            match taken {
+                Some(session) => evaluate_unit(
+                    session,
+                    &context.directory,
+                    evaluation,
+                    false,
+                    &context.ground,
+                )
+                .map(|prepared| ReadAhead {
+                    prepared,
+                    chained: Vec::new(),
+                }),
+                None => Err(MakeError::Evaluate(
+                    "reading a recursive Make child was abandoned".to_owned(),
+                )),
+            }
+        };
         context.diagnostics.absorb(&raised);
         let read = read.map(|mut read| {
             // From here the session speaks for itself again: anything it says
@@ -1174,8 +1247,14 @@ impl ClaimedRead {
             }
             Self::Unread(unread) => {
                 let (session, context) = *unread;
-                let read = evaluate_unit(session, &context.directory, evaluation, chains)
-                    .map(|prepared| std::sync::Arc::new(std::sync::Mutex::new(prepared)));
+                let read = evaluate_unit(
+                    session,
+                    &context.directory,
+                    evaluation,
+                    chains,
+                    &context.ground,
+                )
+                .map(|prepared| std::sync::Arc::new(std::sync::Mutex::new(prepared)));
                 (context, read, false)
             }
             Self::Repeated(carried) => {
@@ -1481,6 +1560,7 @@ fn start_read(plan: &ChainPlan, compilation: Compilation, order: ReadOrder) -> C
     let unread = std::sync::Arc::new(std::sync::Mutex::new(Some(session)));
     let held = std::sync::Arc::clone(&unread);
     let directory = context.directory.clone();
+    let ground = std::sync::Arc::clone(&context.ground);
     let evaluation = plan.evaluation;
     let carried = plan.clone();
     let below = context.clone();
@@ -1491,7 +1571,7 @@ fn start_read(plan: &ChainPlan, compilation: Compilation, order: ReadOrder) -> C
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         session.map(|session| {
-            let prepared = evaluate_unit(session, &directory, evaluation, true)?;
+            let prepared = evaluate_unit(session, &directory, evaluation, true, &ground)?;
             let chained = chained_reads(&prepared, &below, &collecting, &carried, order);
             Ok(ReadAhead { prepared, chained })
         })
@@ -1554,6 +1634,43 @@ fn runs_a_command_to_resolve(command: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An evaluation moves the count on either side of itself, and refuses to
+    /// be counted while it runs.
+    ///
+    /// The refusal is the half that matters and the half a flag would not
+    /// have. A worker evaluating a unit can write through `$(shell)` while the
+    /// composing thread is scanning, so the scan taking place across that
+    /// window may keep nothing at all: `as_of` answers `None` rather than a
+    /// value the writer is about to make untrue.
+    #[test]
+    fn an_evaluation_moves_the_ground_count() {
+        let ground = GroundEpoch::default();
+        let before = ground.as_of().expect("nothing is evaluating yet");
+
+        let inside = ground.evaluating(|| ground.as_of());
+        assert_eq!(inside, None, "no answer may be kept across a writer");
+
+        let after = ground.as_of().expect("the evaluation is over");
+        assert_ne!(before, after, "an evaluation that ran has moved the ground");
+
+        // And a second one moves it again, so two scans either side of it
+        // cannot agree by accident.
+        ground.evaluating(|| ());
+        let last = ground.as_of().expect("the second evaluation is over");
+        assert_ne!(after, last, "each evaluation moves it once more");
+    }
+
+    /// A read that raised still moves the count, because a read that failed
+    /// part way through may have written before it did.
+    #[test]
+    fn a_raised_evaluation_still_counts() {
+        let ground = GroundEpoch::default();
+        let before = ground.as_of().expect("nothing is evaluating yet");
+        let raised: Result<(), &str> = ground.evaluating(|| Err("refused"));
+        assert!(raised.is_err());
+        assert_ne!(before, ground.as_of().expect("the evaluation is over"));
+    }
 
     /// The property the whole design rests on: a `chdir` on one worker is not
     /// seen by another worker.

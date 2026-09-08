@@ -2369,6 +2369,7 @@ fn compilation_context(
         interrupts: crate::make::interrupts::ReadInterrupts::installed(),
         census: Arc::clone(&session.census),
         scripts: Arc::clone(&session.scripts),
+        ground: Arc::default(),
         reporting,
         makeflags: propagated_makeflags(invocation),
         always_make: invocation.given(Switch::AlwaysMake),

@@ -305,6 +305,22 @@ pub(crate) struct StagedFreshness {
     pub(crate) staged_runs_nothing: bool,
 }
 
+/// What one of a repeated scan's takings works in, and what it may keep.
+///
+/// A Make composition scans the same graph once per recursive recipe — zsh's
+/// incremental build takes 1,031 of them — so neither the runtime nor the
+/// traversal's scratch is allocated per scan, and the answers the ground gave
+/// one taking are offered to the next. They travel together because a scan
+/// wants all three and because the counter says which of the state the runtime
+/// holds is still true. See [`RuntimeState::reset_asked_as_of`].
+pub(crate) struct RepeatedScan<'a> {
+    /// The caller's word on when the ground last moved, or `None` where it
+    /// cannot say and every question goes to the ground.
+    pub(crate) ground_as_of: Option<u64>,
+    pub(crate) runtime: &'a mut RuntimeState,
+    pub(crate) scratch: &'a mut TraversalScratch,
+}
+
 impl BuildGraph {
     /// An empty graph holding only the built-in `phony` rule and `console` pool.
     #[must_use]
@@ -792,17 +808,24 @@ impl BuildGraph {
         staged: &[Node],
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
-        runtime: &mut RuntimeState,
-        scratch: &mut TraversalScratch,
+        scan: RepeatedScan<'_>,
     ) -> Result<StagedFreshness, crate::error::GraphError>
     where
         F: FnMut(&std::path::Path) -> std::io::Result<i64>,
     {
+        let RepeatedScan {
+            ground_as_of,
+            runtime,
+            scratch,
+        } = scan;
         let target = self.arenas.edge(edge.0).out[0];
         let mut roots = Vec::with_capacity(staged.len() + 1);
         roots.push(target);
         roots.extend(staged.iter().map(|node| node.0));
-        runtime.reset_asked(&self.arenas);
+        // The scan's own workings go; what the ground told this state stays,
+        // where the caller says the ground has not moved since it answered. See
+        // [`RuntimeState::reset_asked_as_of`].
+        runtime.reset_asked_as_of(&self.arenas, ground_as_of);
         // `-W FILE` and `-o FILE` are answers about a file, and this question
         // is about a file, so both switches reach it. Resolved against the
         // graph here for the reason the build resolves them against its own:

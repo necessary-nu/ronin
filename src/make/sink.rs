@@ -955,6 +955,7 @@ impl GraphSink {
         begun: bool,
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
+        ground_as_of: Option<u64>,
     ) -> Result<crate::frontend::StagedFreshness, crate::error::GraphError>
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
@@ -964,8 +965,11 @@ impl GraphSink {
             staged,
             stat,
             asserted,
-            &mut self.subninja_freshness,
-            &mut self.subninja_scratch,
+            crate::frontend::RepeatedScan {
+                ground_as_of,
+                runtime: &mut self.subninja_freshness,
+                scratch: &mut self.subninja_scratch,
+            },
         )?;
         // `begun` outranks the disk, for the reason the caller records: a
         // recipe whose earlier lines have already run may have written this

@@ -219,6 +219,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             interrupts: interrupts::ReadInterrupts::installed(),
             census: std::sync::Arc::clone(&session.census),
             scripts: std::sync::Arc::clone(&session.scripts),
+            ground: std::sync::Arc::default(),
             reporting: false,
             root_directory: directory.clone(),
             directory,
@@ -287,6 +288,11 @@ pub(crate) struct CompilationContext {
     /// shell would dozens of times to the one answer. See
     /// [`kati::scripts::Scripts`].
     pub(crate) scripts: std::sync::Arc<kati::scripts::Scripts>,
+    /// Whether an evaluation has run since the composition last asked the
+    /// ground something, shared for the reason the scripts are: the question is
+    /// asked on the composing thread and answered by whichever worker performed
+    /// the read. See [`parallel::GroundEpoch`].
+    pub(crate) ground: std::sync::Arc<parallel::GroundEpoch>,
     /// Whether this compilation is being run to report on the build rather
     /// than to make it.
     ///
@@ -1893,7 +1899,14 @@ fn stage_recursive_wrapper(
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
     let settled = sink
-        .settle_subninja_freshness(edge, &staged, begun, &mut stat, asserted)
+        .settle_subninja_freshness(
+            edge,
+            &staged,
+            begun,
+            &mut stat,
+            asserted,
+            context.ground.as_of(),
+        )
         .map_err(|error| MakeError::Evaluate(error.to_string()))?;
     Ok(if settled.dirty {
         RecursiveWrapper::Dirty(edge, settled.staged_runs_nothing)
