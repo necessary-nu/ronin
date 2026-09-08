@@ -34,7 +34,7 @@ use make_workloads::{
 
 #[path = "support/quiet_host.rs"]
 mod quiet_host;
-use quiet_host::{DEFAULT_MAX_LOAD, load_average, require_quiet_host};
+use quiet_host::{DEFAULT_MAX_LOAD, load_average, provenance, require_quiet_host};
 
 #[path = "support/statistic.rs"]
 mod statistic;
@@ -642,6 +642,7 @@ fn metadata(
          # repetitions={repetitions}\n\
          # load_average_before={load:.2}\n\
          # max_load={:.2}\n\
+         # provenance={}\n\
          # noise_control=interleaved tool samples with a rotating offset; stdout/stderr \
          discarded; blocking wait, no sampling thread; MAKEFLAGS/MFLAGS/MAKELEVEL cleared; \
          tenth-percentile wall time over each row's own repetition count; no CPU pinning\n\
@@ -657,6 +658,7 @@ fn metadata(
         config.jobs,
         config.warmups,
         config.max_load,
+        provenance(load),
         MAX_RECORDED_RUNTIME_RATIO * 100.0,
         recursion_units(),
     );

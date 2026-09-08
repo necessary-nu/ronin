@@ -24,7 +24,7 @@ use workloads::{
 
 #[path = "support/quiet_host.rs"]
 mod quiet_host;
-use quiet_host::{DEFAULT_MAX_LOAD, load_average, require_quiet_host};
+use quiet_host::{DEFAULT_MAX_LOAD, load_average, provenance, require_quiet_host};
 
 #[path = "support/statistic.rs"]
 mod statistic;
@@ -656,12 +656,14 @@ fn metadata(
          # repetitions={repetitions}\n\
          # load_average_before={load:.2}\n\
          # max_load={:.2}\n\
+         # provenance={}\n\
          # noise_control=interleaved tool samples with a rotating offset; stdout/stderr discarded; {} warmup(s); tenth-percentile wall time over each row's own repetition count; Linux peak RSS sampled from /proc every 100 us and summarised by its median; no CPU pinning\n\
          # statistic=tenth percentile of the samples. Contention can only ADD time, so the informative part of a no-op's distribution is its floor; a median sat inside the tail a busy host writes and refused an unmodified tree up to 19.4% of the time at five repetitions. Peak RSS keeps its median, because the failure IT is gated against is a high number\n\
          # validation_thresholds=Ronin/Ninja runtime ratio <= {:.0}% of recorded v1 ratio and Ronin runtime <= {:.0}% of pinned Ninja; peak RSS <= {:.0}% of pinned Ninja\n\
          # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},clean:{CLEAN_TREE_EDGES},large:{LARGE_MANIFEST_EDGES},scheduler:{SCHEDULER_EDGES}\n",
         config.warmups,
         config.max_load,
+        provenance(load),
         config.warmups,
         MAX_RECORDED_RUNTIME_RATIO * 100.0,
         MAX_NINJA_RUNTIME_RATIO * 100.0,
