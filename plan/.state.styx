@@ -1009,6 +1009,7 @@ assertions (
     {id zsh-incremental-regressed-from-parity-while-the-gate-refused, kind @doing, author "brendan@necessary.nu", at 2026-09-06T09:20:55.017312694Z}
     {id a-composed-unit-is-emitted-again-on-every-staging-pass, kind @doing, author "brendan@necessary.nu", at 2026-09-07T12:55:23.361461083Z}
     {id the-performance-gates-have-never-run-on-this-host, kind @doing, author "brendan@necessary.nu", at 2026-09-08T10:04:02.531016253Z}
+    {id a-freshness-probe-stats-the-graph-under-every-wrapper, kind @doing, author "brendan@necessary.nu", at 2026-09-08T10:36:03.103790433Z}
 )
 
 impl_evidence (
