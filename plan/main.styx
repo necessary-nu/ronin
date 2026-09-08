@@ -22055,4 +22055,18 @@ children (
             }
         )
     }
+
+    {
+        id a-long-path-costs-ronin-what-it-costs-gnu-make-nothing
+        title "Stop paying per character of a path on every node"
+        kind @perf
+        log (
+            {
+                at 2026-09-08T18:48:52.478244608Z
+                author "brendan@necessary.nu"
+                kind @blocker
+                text "RONIN'S RUNTIME ON A TREE SCALES WITH THE LENGTH OF THE PATH THAT TREE SITS UNDER. GNU Make's does not. Found while checking a harness defect reported on `zsh-incremental-regressed-from-parity-while-the-gate-refused`, and the harness consequence is real but it is the smaller half of this.\n\nMEASURED BY ME, one binary pair, one host, runs minutes apart, `make_baseline` with five repetitions and only the scratch directory moved. The `recursive-noop` workload is 259 units at fanout 6, depth 3, leaf 8.\n\n  scratch `/tmp/rn/s`, 11 characters\n    GNU   106.3 ms   Ronin 104.9 ms   ratio 0.99x   (load 12.38)\n    GNU   115.0 ms   Ronin 105.4 ms   ratio 0.92x   (load 17.71)\n    GNU   107.4 ms   Ronin  98.5 ms   ratio 0.92x   (load 16.69)\n\n  scratch 128 characters, same generated tree beneath it\n    GNU   109.8 ms   Ronin 152.6 ms   ratio 1.39x   (load 14.70)\n\nGNU moves from 106-115 ms to 110 ms, which is nothing. Ronin moves from 98-105 ms to 153 ms, which is about 45% for 117 extra characters of a shared prefix. The tree, the unit count, the recipes and the number of edges are identical; only the string every path is spelled with got longer.\n\nTWO CONSEQUENCES, and they are separate problems.\n\nTHE HARNESS ONE, which is what was originally reported. The gate's synthetic rows cannot be compared between two checkouts whose paths differ in length, because `--scratch` defaults to `target/make-performance` under the repository root and a worktree sits deeper than the main checkout. A paired before-and-after measurement built in two different directories is measuring the directories. Any such comparison has to pin one scratch path for both arms. A run that does not say which scratch it used cannot be read.\n\nTHE REAL ONE. Something in Ronin is proportional to path length per node or per edge where GNU Make is proportional to nothing. GNU treats a target name as a string it compares; Ronin canonicalises, interns and hashes paths, and on a 259-unit graph the per-character cost of doing that repeatedly is apparently worth 45% of the run. Whether it is the canonicalisation, the interning, the hashing, or all three is NOT established — nobody has profiled this — and establishing it is the first thing to do. `src/htab.rs` holds the path hash and its doc already explains that the four-byte and eight-byte reads are shaped for exactly this cost, so the hash has been thought about before; the question is how many times a path is hashed or canonicalised per node and whether that count is necessary.\n\nWHY IT MATTERS BEYOND THE GATE. Real trees have long paths. The Linux kernel tree in this repository sits under a path of about 60 characters before kbuild adds `scripts/`, `arch/x86/`, `include/generated/` and object directories to it, and a user's checkout may be deeper still. If 117 characters are worth 45% on a synthetic tree, this is being paid on every workload we measure and is invisible in every ratio, because both arms of every comparison so far have used the same path.\n\nDO NOT confuse this with the composition or freshness terms. Those were measured on the kernel and this is a different axis entirely: it is per character rather than per node, and it would not have shown up in any profile taken at a single path depth."
+            }
+        )
+    }
 )
