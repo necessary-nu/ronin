@@ -391,3 +391,71 @@ fn a_switch_argument_reaches_makeflags_quoted() {
     let decoded = decode_makefile_makeflags(b"", b" --debug=b\\\\x$$y", b"").unwrap();
     assert_eq!(decoded.makeflags.as_ref(), b" --debug=b\\\\x$$y");
 }
+
+/// A unit's key holds `MAKEFLAGS`, which holds the address of the job budget
+/// this process published — a FIFO named after the process's own id. Within
+/// one run every unit carries the same one and nothing notices; written down
+/// and compared against a later run, no key ever matches again.
+fn settled(key: &[u8]) -> Vec<u8> {
+    let mut key = key.to_vec();
+    super::settle_job_budget_address(&mut key);
+    key
+}
+
+#[test]
+fn an_address_is_written_as_a_placeholder() {
+    assert_eq!(
+        settled(b"rR -j8 --jobserver-auth=fifo:/tmp/ronin-jobserver-1234-0 --no-print-directory"),
+        b"rR -j8 --jobserver-auth=<address> --no-print-directory".to_vec()
+    );
+}
+
+#[test]
+fn two_runs_of_one_invocation_key_alike() {
+    let first = settled(b"rR --jobserver-auth=fifo:/tmp/ronin-jobserver-1-0 -j8");
+    let second = settled(b"rR --jobserver-auth=fifo:/tmp/ronin-jobserver-99999-3 -j8");
+    assert_eq!(first, second);
+}
+
+/// A composed child's key carries the whole environment it was given, and
+/// that holds the address again under `MAKEFLAGS` and `MFLAGS`.
+#[test]
+fn every_occurrence_of_the_address_is_settled() {
+    let key = settled(
+        b"MAKEFLAGS=rR --jobserver-auth=fifo:/tmp/a-1-0\0MFLAGS=--jobserver-auth=fifo:/tmp/a-1-0\0Z=1",
+    );
+    assert_eq!(
+        key,
+        b"MAKEFLAGS=rR --jobserver-auth=<address>\0MFLAGS=--jobserver-auth=<address>\0Z=1".to_vec()
+    );
+}
+
+/// In an environment the entries are separated by NUL rather than by a space,
+/// so a value that ran to the next space would swallow the entries after it.
+#[test]
+fn an_environment_entry_ends_at_its_nul() {
+    let key = settled(b"MAKEFLAGS=--jobserver-auth=fifo:/tmp/a-1-0\0KEEP=me");
+    assert!(
+        key.ends_with(b"\0KEEP=me"),
+        "{}",
+        String::from_utf8_lossy(&key)
+    );
+}
+
+#[test]
+fn a_key_with_no_address_is_untouched() {
+    assert_eq!(
+        settled(b"rR -j8 --no-print-directory"),
+        b"rR -j8 --no-print-directory".to_vec()
+    );
+}
+
+/// Written as a placeholder rather than removed, so a run that published an
+/// address and one that published none are still different compilations.
+#[test]
+fn a_run_without_a_jobserver_keys_apart() {
+    assert_ne!(
+        settled(b"rR -j8 --jobserver-auth=fifo:/tmp/a-1-0"),
+        settled(b"rR -j8")
+    );
+}

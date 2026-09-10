@@ -2164,7 +2164,50 @@ fn compilation_key(directory: &Path, makefiles: &[PathBuf], makeflags: &str) -> 
     }
     key.push(0);
     key.extend_from_slice(makeflags.as_bytes());
+    settle_job_budget_address(&mut key);
     key
+}
+
+/// Write the job budget's address in this key as a fixed word.
+///
+/// The address names a FIFO this process created and holds the process's own
+/// id, so it is different on every run and the same for every unit within one
+/// run. Leaving it in makes the key identify the invocation as well as the
+/// unit. That is invisible while a key is only ever compared against another
+/// from the same process, and fatal the moment one is written down and
+/// compared against a later run's.
+///
+/// EVERY occurrence, because a composed child's key carries the whole
+/// environment it was given and that holds the address again under `MAKEFLAGS`
+/// and `MFLAGS`. Measured on the kernel tree: with all of them settled, two
+/// runs' keys are identical byte for byte, and with any of them left the keys
+/// differ every run.
+///
+/// Written as a placeholder rather than removed, so a run that publishes an
+/// address and one that does not still key apart — whether there is a
+/// jobserver at all is something the read can see.
+fn settle_job_budget_address(key: &mut Vec<u8>) {
+    const ADDRESS: &[u8] = b"--jobserver-auth=";
+    const PLACEHOLDER: &[u8] = b"<address>";
+    let mut settled = Vec::with_capacity(key.len());
+    let mut rest = key.as_slice();
+    while let Some(at) = rest
+        .windows(ADDRESS.len())
+        .position(|window| window == ADDRESS)
+    {
+        let value = at + ADDRESS.len();
+        settled.extend_from_slice(&rest[..value]);
+        settled.extend_from_slice(PLACEHOLDER);
+        // The value runs to the end of its word. In a command line that is a
+        // space; in an environment the entries are separated by NUL.
+        let end = rest[value..]
+            .iter()
+            .position(|byte| byte.is_ascii_whitespace() || *byte == 0)
+            .map_or(rest.len(), |offset| value + offset);
+        rest = &rest[end..];
+    }
+    settled.extend_from_slice(rest);
+    *key = settled;
 }
 
 /// The graph a makefile describes, or the result of not getting one.

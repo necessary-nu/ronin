@@ -195,6 +195,10 @@ fn extend_compilation_key(
     key.extend_from_slice(shell_flags);
     append_environment_key(key, &parent.environment);
     append_recipe_environment_key(key, &parent.recipe_environment);
+    // The environments carry `MAKEFLAGS` and `MFLAGS`, which carry the job
+    // budget's address, which is different on every run. See
+    // [`super::settle_job_budget_address`].
+    super::settle_job_budget_address(key);
 }
 
 /// What a child's own recipes are given on top of the build environment: its
