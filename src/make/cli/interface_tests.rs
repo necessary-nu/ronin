@@ -263,7 +263,7 @@ fn eval_fragments_reach_compilation() {
         &std::sync::Arc::default(),
     );
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
-    let context = super::compilation_context(
+    let context = super::pass::compilation_context(
         &invocation,
         directory.path().canonicalize().unwrap(),
         super::JobCounts {
@@ -321,7 +321,7 @@ fn generated_include_is_provisional_graph_root() {
         &std::sync::Arc::default(),
     );
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
-    let context = super::compilation_context(
+    let context = super::pass::compilation_context(
         &invocation,
         directory.path().canonicalize().unwrap(),
         super::JobCounts {

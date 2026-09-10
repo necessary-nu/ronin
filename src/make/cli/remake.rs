@@ -939,6 +939,19 @@ pub(super) fn build_compiler_inputs(
     // which is precisely what must not be handed on.
     let mut loaded = loaded;
     for (unit, journal) in loaded.take_units_read() {
+        // The record takes EVERY pass's answers, where the journals above keep
+        // only the first pass's. A pass whose replay diverged recorded answers
+        // to a ground that had moved, and a record that outlives the
+        // invocation is the one thing that has to see that rather than discard
+        // it: it would otherwise describe a graph composed against two
+        // grounds and check it against one.
+        settled.record.absorb(
+            &unit,
+            &journal.directory,
+            &journal.ground,
+            &journal.off_journal,
+            &journal.environment,
+        );
         std::sync::Arc::make_mut(&mut settled.read_units)
             .entry(unit)
             .or_insert(journal);

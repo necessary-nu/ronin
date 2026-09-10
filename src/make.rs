@@ -22,6 +22,7 @@
 /// name.
 pub use kati;
 
+pub(crate) mod cache;
 pub(crate) mod cli;
 mod enclosing;
 mod interrupts;
@@ -30,6 +31,7 @@ mod order;
 mod parallel;
 use parallel::{ChildUnit, ReadsAhead, read_ahead};
 mod recipe;
+pub(crate) mod record;
 mod report;
 mod sink;
 
@@ -555,6 +557,24 @@ pub(crate) struct UnitJournal {
     /// `None` for a read that must happen again whatever: one that refused a
     /// Makefile, and one that went to the ground outside this journal.
     read: Option<CarriedRead>,
+    /// What the read asked while its journal was suspended, which is a recipe
+    /// the compiler had to expand for itself.
+    ///
+    /// Not replayed and not replayable — putting these back in the sequence
+    /// would move every question after them. Kept because a record that
+    /// outlives the invocation re-asks by question rather than by position,
+    /// and a read that depended on them depended on them however it asked.
+    off_journal: Vec<kati::session::GroundAnswer>,
+    /// Every environment variable the read depended on, with what it read —
+    /// `None` where it read the name and found nothing.
+    environment: Vec<(kati::bytes::Bytes, Option<kati::bytes::Bytes>)>,
+    /// Where the process stood while this unit was read.
+    ///
+    /// kati answers `$(wildcard)`, `include` and every other ground question
+    /// against the working directory, and a unit is read in its own. So the
+    /// directory is half of what a question means, and a later run asking the
+    /// same text somewhere else is asking something else.
+    directory: PathBuf,
 }
 
 /// Every unit's journal, keyed by cache key.
@@ -900,6 +920,13 @@ pub(crate) struct Groundwork {
     /// is told must not depend on which thread ends up reading it. It is
     /// changed only between passes, when no worker exists.
     pub(crate) read_units: std::sync::Arc<ReadJournals>,
+    /// What every pass of this composition asked the ground.
+    ///
+    /// Every pass's answers, not just the first pass's: `read_units` keeps the
+    /// first read of each unit because that is the one a later pass replays,
+    /// and a pass whose replay diverged is exactly what this has to notice.
+    /// See [`record::CompositionRecord`].
+    pub(crate) record: record::CompositionRecord,
 }
 
 fn load_with_subninjas_unlocked(
@@ -1150,6 +1177,9 @@ fn read_unit(
             // and ask nothing. See
             // [`kati::session::GroundJournal::asked_off_journal`].
             read: (!refused && !asked_off_journal).then(|| std::sync::Arc::clone(prepared)),
+            off_journal: ev.session.ground_journal.close_off_journal(),
+            environment: ev.session.environment_dependencies(),
+            directory: context.directory.clone(),
         })
     };
     drop(held);
