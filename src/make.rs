@@ -245,6 +245,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             parallel_reads: session.flags.num_jobs.max(1),
             environment,
             recipe_environment,
+            origin: None,
         },
         session,
         shuffle,
@@ -262,6 +263,26 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         &Groundwork::default(),
         RecipeExpansion::Construction,
     )
+}
+
+/// How a child unit was invoked, as a run that did not compose it can invoke
+/// it again.
+///
+/// The strings a recursive recipe line reduces to are not here: they were read
+/// through the shell and its command substitutions, and the words and
+/// directory those produced are what a session is built from. Everything else
+/// a child compilation takes from its parent is here or shared by every unit.
+#[derive(Clone, Debug)]
+pub(crate) struct ChildOrigin {
+    pub(crate) words: Vec<crate::util::BString>,
+    /// Resolved: every `-C` and leading `cd` applied and canonicalised.
+    pub(crate) directory: PathBuf,
+    pub(crate) parent_makeflags: String,
+    pub(crate) gnumakeflags: Option<String>,
+    /// The environment the child reads, which is its parent's exports.
+    pub(crate) environment: std::sync::Arc<Vec<(OsString, OsString)>>,
+    pub(crate) level: usize,
+    pub(crate) recipe_environment: Vec<(OsString, Option<OsString>)>,
 }
 
 /// Invocation context retained while one Makefile compilation discovers its
@@ -400,6 +421,9 @@ pub(crate) struct CompilationContext {
     pub(crate) environment: std::sync::Arc<Vec<(OsString, OsString)>>,
     /// Changes child commands need in addition to the root build environment.
     pub(crate) recipe_environment: Vec<(OsString, Option<OsString>)>,
+    /// How this unit was invoked, for a composed child; `None` for the root,
+    /// which the invocation itself describes.
+    pub(crate) origin: Option<std::sync::Arc<ChildOrigin>>,
 }
 
 /// One Makefile ready for kati evaluation and graph composition.
@@ -575,6 +599,8 @@ pub(crate) struct UnitJournal {
     /// directory is half of what a question means, and a later run asking the
     /// same text somewhere else is asking something else.
     directory: PathBuf,
+    /// How the unit was invoked, for a composed child.
+    origin: Option<std::sync::Arc<ChildOrigin>>,
 }
 
 /// Every unit's journal, keyed by cache key.
@@ -733,10 +759,16 @@ impl CompilationState<'_> {
     /// that compiled it, because what is retained is the session and not the
     /// directory: where the recipes expand is recorded here, and entered again
     /// when one of them is asked for.
-    fn retain(&mut self, recipes: Option<UnitRecipes>, directory: &std::path::Path) {
+    fn retain(&mut self, key: &[u8], recipes: Option<UnitRecipes>, directory: &std::path::Path) {
         if let Some((read, deferred, layout, edges)) = recipes {
-            self.pending_recipes
-                .admit(read, deferred, layout, directory.to_owned(), &edges);
+            self.pending_recipes.admit(
+                key.to_vec(),
+                read,
+                deferred,
+                layout,
+                directory.to_owned(),
+                &edges,
+            );
         }
     }
 
@@ -927,6 +959,14 @@ pub(crate) struct Groundwork {
     /// and a pass whose replay diverged is exactly what this has to notice.
     /// See [`record::CompositionRecord`].
     pub(crate) record: record::CompositionRecord,
+    /// Every pass's staged work so far, in pass order and each name once: the
+    /// makefile-phase segments and the goal-phase ones apart. What a run that
+    /// loads the graph builds instead of staging pass by pass.
+    pub(crate) staged_for_makefiles: Vec<Vec<u8>>,
+    pub(crate) staged_for_goals: Vec<Vec<u8>>,
+    /// What the build over the settled graph needs beside the graph, gathered
+    /// on the pass that settled.
+    pub(crate) build: Option<cache::artifact::BuildArtifact>,
 }
 
 fn load_with_subninjas_unlocked(
@@ -985,10 +1025,12 @@ fn load_with_subninjas_unlocked(
     let ungrouped = (state.job_budget > run_budget)
         .then(|| std::num::NonZeroUsize::new(run_budget))
         .flatten();
+    let clean_wrappers = sink.take_clean_wrappers();
     let graph = sink.into_graph(ungrouped).map_err(MakeError::Construct)?;
     Ok(Loaded {
         graph,
         pending_recipes,
+        clean_wrappers,
         regenerations: state.regenerations,
         makefile_staged: state.makefile_staged,
         remakes: state.remakes,
@@ -1180,6 +1222,7 @@ fn read_unit(
             off_journal: ev.session.ground_journal.close_off_journal(),
             environment: ev.session.environment_dependencies(),
             directory: context.directory.clone(),
+            origin: context.origin.clone(),
         })
     };
     drop(held);
@@ -1303,7 +1346,7 @@ fn compile_unit(
     if let Some(journal) = journal {
         state.units_read.insert(compilation_key.clone(), journal);
     }
-    state.retain(pending_recipes, &context.directory);
+    state.retain(&compilation_key, pending_recipes, &context.directory);
     state.pending_recipes.admit_settled(settled_edges);
     state.admit(unit_remakes);
 
@@ -2158,6 +2201,10 @@ pub struct Loaded {
     /// The recipes this graph's own executor will expand as it launches them,
     /// with the session they belong to.
     pending_recipes: Option<recipe::PendingRecipes>,
+    /// The recursive wrappers the composition settled clean, with the staged
+    /// work each one's freshness was read from. See
+    /// [`sink::GraphSink::settle_subninja_freshness`].
+    clean_wrappers: Vec<(Edge, Vec<Node>)>,
 }
 
 impl Loaded {

@@ -352,6 +352,10 @@ pub struct GraphSink {
     /// Across units, because it is what one unit made that the units it
     /// composes are asking about. See [`Self::made_and_absent`].
     prebuilt: RapidHashSet<Node>,
+    /// The recursive wrappers the freshness scan settled clean, with the
+    /// staged work each was read from. A compile-time verdict about the disk,
+    /// which a run that loads this graph has to take again.
+    clean_wrappers: Vec<(Edge, Vec<Node>)>,
     declared_pools: RapidHashSet<Vec<u8>>,
     completion_proxies: usize,
     recipe_stages: usize,
@@ -446,6 +450,7 @@ impl GraphSink {
             mentions: RapidHashMap::default(),
             observed_members: RapidHashMap::default(),
             prebuilt: RapidHashSet::default(),
+            clean_wrappers: Vec::new(),
             declared_pools: RapidHashSet::default(),
             completion_proxies: 0,
             recipe_stages: 0,
@@ -983,6 +988,7 @@ impl GraphSink {
         }
         self.graph.set_edge_rule(edge, self.phony);
         self.graph.unalias_outputs(edge);
+        self.clean_wrappers.push((edge, staged.to_vec()));
         Ok(settled)
     }
 

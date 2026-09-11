@@ -13,12 +13,19 @@
 //! megabytes, and a reader that checks a digest has just read the bytes it
 //! would have stored.
 
+use crate::build::LateStep;
 use crate::htab::rapidhashv1;
+use crate::make::ChildOrigin;
+use crate::make::layout::{CommandLayout, SettledSteps};
+use crate::subprocess::Launch;
+use kati::build_sink::DeferredRecipeId;
 use kati::bytes::Bytes;
 use kati::session::{GroundAnswer, GroundQuestion};
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
+#[cfg(test)]
+use {crate::subprocess::DirectLaunch, crate::util::BString};
 
 /// What the reader checks before it believes a byte of the rest.
 ///
@@ -40,6 +47,8 @@ pub(crate) struct UnitArtifact {
     /// digest rather than a date: a file rewritten to the same contents is the
     /// same read, and one restored from a backup with an old date is not.
     pub(crate) sources: Vec<(OsString, u64)>,
+    /// How the unit was invoked; `None` for the root.
+    pub(crate) origin: Option<ChildOrigin>,
 }
 
 /// Everything one invocation recorded.
@@ -47,6 +56,9 @@ pub(crate) struct Artifact {
     /// The digest of the graph file this describes.
     pub(crate) graph: u64,
     pub(crate) units: Vec<UnitArtifact>,
+    /// `None` for a composition that never settled through the compiler-input
+    /// build, which a reader has nothing to build from.
+    pub(crate) build: Option<BuildArtifact>,
 }
 
 impl Artifact {
@@ -67,11 +79,16 @@ impl Artifact {
                     .iter()
                     .map(|(name, contents)| (name.clone(), rapidhashv1(contents.as_ref())))
                     .collect(),
+                origin: journal.origin.as_deref().cloned(),
             })
             .collect();
         // In key order, so that one composition is one file.
         units.sort_unstable_by(|left, right| left.key.cmp(&right.key));
-        Self { graph, units }
+        Self {
+            graph,
+            units,
+            build: settled.build.clone(),
+        }
     }
 
     pub(crate) fn encode(&self, out: &mut dyn Write) -> io::Result<()> {
@@ -95,8 +112,9 @@ impl Artifact {
                 w.bytes(name.as_encoded_bytes())?;
                 w.u64(*digest)?;
             }
+            w.option(unit.origin.as_ref(), encode_origin)?;
         }
-        Ok(())
+        w.option(self.build.as_ref(), |w, build| build.encode(w))
     }
 
     /// The artifact `bytes` holds, or `None` for bytes that do not hold one.
@@ -124,6 +142,7 @@ impl Artifact {
                 let name = os_string(r.bytes()?);
                 sources.push((name, r.u64()?));
             }
+            let origin = r.option(decode_origin)?;
             units.push(UnitArtifact {
                 key,
                 directory,
@@ -131,9 +150,15 @@ impl Artifact {
                 off_journal,
                 environment,
                 sources,
+                origin,
             });
         }
-        (r.at == bytes.len()).then_some(Self { graph, units })
+        let build = r.option(BuildArtifact::decode)?;
+        (r.at == bytes.len()).then_some(Self {
+            graph,
+            units,
+            build,
+        })
     }
 }
 
@@ -301,6 +326,350 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// How a child unit was invoked, as a run that did not compose it can invoke
+/// it again. See [`crate::make::cli::subninja::ChildOrigin`].
+fn encode_origin(w: &mut Writer<'_>, origin: &ChildOrigin) -> io::Result<()> {
+    w.len(origin.words.len())?;
+    for word in &origin.words {
+        w.bytes(word)?;
+    }
+    w.bytes(origin.directory.as_os_str().as_encoded_bytes())?;
+    w.bytes(origin.parent_makeflags.as_bytes())?;
+    w.option(origin.gnumakeflags.as_deref(), |w, flags| {
+        w.bytes(flags.as_bytes())
+    })?;
+    w.len(origin.environment.len())?;
+    for (name, value) in origin.environment.iter() {
+        w.bytes(name.as_encoded_bytes())?;
+        w.bytes(value.as_encoded_bytes())?;
+    }
+    w.len(origin.level)?;
+    w.recipe_environment(&origin.recipe_environment)
+}
+
+#[cfg(test)]
+fn decode_origin(r: &mut Reader<'_>) -> Option<ChildOrigin> {
+    let mut words = Vec::new();
+    for _ in 0..r.len()? {
+        words.push(BString::from(r.bytes()?));
+    }
+    let directory = PathBuf::from(os_string(r.bytes()?));
+    let parent_makeflags = String::from_utf8(r.bytes()?.to_vec()).ok()?;
+    let gnumakeflags = match r.option(|r| r.bytes().map(<[u8]>::to_vec))? {
+        None => None,
+        Some(flags) => Some(String::from_utf8(flags).ok()?),
+    };
+    let mut environment = Vec::new();
+    for _ in 0..r.len()? {
+        let name = os_string(r.bytes()?);
+        environment.push((name, os_string(r.bytes()?)));
+    }
+    let level = r.len()?;
+    let recipe_environment = r.recipe_environment()?;
+    Some(ChildOrigin {
+        words,
+        directory,
+        parent_makeflags,
+        gnumakeflags,
+        environment: std::sync::Arc::new(environment),
+        level,
+        recipe_environment,
+    })
+}
+
+/// One unit that left recipes for the build to expand, and what wraps every
+/// command it produces.
+#[derive(Clone)]
+pub(crate) struct RecipeUnitArtifact {
+    pub(crate) key: Vec<u8>,
+    pub(crate) layout: CommandLayout,
+    pub(crate) directory: PathBuf,
+}
+
+/// Everything the build over a loaded graph needs that is not in the graph.
+///
+/// Edges are named by their first output's path rather than by index, so the
+/// record does not depend on how the graph numbered them.
+#[derive(Clone)]
+pub(crate) struct BuildArtifact {
+    /// The Makefiles the final read consulted that a rule says how to remake,
+    /// in the order the read reached them.
+    pub(crate) remakes: Vec<Vec<u8>>,
+    pub(crate) forgiven: Vec<Vec<u8>>,
+    pub(crate) unread: Vec<Vec<u8>>,
+    pub(crate) complaints: Vec<(Vec<u8>, String)>,
+    /// Every pass's staged work in pass order, the makefile-phase segments and
+    /// the goal-phase ones apart, each name once.
+    pub(crate) staged_for_makefiles: Vec<Vec<u8>>,
+    pub(crate) staged_for_goals: Vec<Vec<u8>>,
+    /// The recursive wrappers the composition settled clean, each with the
+    /// staged work its freshness was read from.
+    pub(crate) clean_wrappers: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+    pub(crate) units: Vec<RecipeUnitArtifact>,
+    /// Each deferred edge: its output, the unit whose evaluator expands it, and
+    /// which of that unit's recipes it is.
+    pub(crate) deferred: Vec<(Vec<u8>, Vec<u8>, DeferredRecipeId)>,
+    pub(crate) settled: Vec<(Vec<u8>, SettledSteps)>,
+    /// The root unit's settled `MAKEFLAGS` and the widest budget any unit asked
+    /// to run at.
+    pub(crate) makeflags: String,
+    pub(crate) job_budget: usize,
+}
+
+impl BuildArtifact {
+    fn encode(&self, w: &mut Writer<'_>) -> io::Result<()> {
+        for names in [&self.remakes, &self.forgiven, &self.unread] {
+            w.names(names)?;
+        }
+        w.len(self.complaints.len())?;
+        for (name, complaint) in &self.complaints {
+            w.bytes(name)?;
+            w.bytes(complaint.as_bytes())?;
+        }
+        w.names(&self.staged_for_makefiles)?;
+        w.names(&self.staged_for_goals)?;
+        w.len(self.clean_wrappers.len())?;
+        for (wrapper, staged) in &self.clean_wrappers {
+            w.bytes(wrapper)?;
+            w.names(staged)?;
+        }
+        w.len(self.units.len())?;
+        for unit in &self.units {
+            w.bytes(&unit.key)?;
+            w.layout(&unit.layout)?;
+            w.bytes(unit.directory.as_os_str().as_encoded_bytes())?;
+        }
+        w.len(self.deferred.len())?;
+        for (output, unit, recipe) in &self.deferred {
+            w.bytes(output)?;
+            w.bytes(unit)?;
+            w.len(*recipe)?;
+        }
+        w.len(self.settled.len())?;
+        for (output, steps) in &self.settled {
+            w.bytes(output)?;
+            let (ordinary, while_remaking) = steps.parts();
+            w.steps(ordinary)?;
+            w.option(while_remaking, Writer::steps)?;
+        }
+        w.bytes(self.makeflags.as_bytes())?;
+        w.len(self.job_budget)
+    }
+
+    #[cfg(test)]
+    fn decode(r: &mut Reader<'_>) -> Option<Self> {
+        let (remakes, forgiven, unread) = (r.names()?, r.names()?, r.names()?);
+        let mut complaints = Vec::new();
+        for _ in 0..r.len()? {
+            let name = r.bytes()?.to_vec();
+            complaints.push((name, String::from_utf8(r.bytes()?.to_vec()).ok()?));
+        }
+        let staged_for_makefiles = r.names()?;
+        let staged_for_goals = r.names()?;
+        let mut clean_wrappers = Vec::new();
+        for _ in 0..r.len()? {
+            let wrapper = r.bytes()?.to_vec();
+            clean_wrappers.push((wrapper, r.names()?));
+        }
+        let mut units = Vec::new();
+        for _ in 0..r.len()? {
+            let key = r.bytes()?.to_vec();
+            let layout = r.layout()?;
+            let directory = PathBuf::from(os_string(r.bytes()?));
+            units.push(RecipeUnitArtifact {
+                key,
+                layout,
+                directory,
+            });
+        }
+        let mut deferred = Vec::new();
+        for _ in 0..r.len()? {
+            let output = r.bytes()?.to_vec();
+            let unit = r.bytes()?.to_vec();
+            deferred.push((output, unit, r.len()?));
+        }
+        let mut settled = Vec::new();
+        for _ in 0..r.len()? {
+            let output = r.bytes()?.to_vec();
+            let ordinary = r.steps()?;
+            let while_remaking = r.option(Reader::steps)?;
+            settled.push((output, SettledSteps::from_parts(ordinary, while_remaking)));
+        }
+        let makeflags = String::from_utf8(r.bytes()?.to_vec()).ok()?;
+        let job_budget = r.len()?;
+        Some(Self {
+            remakes,
+            forgiven,
+            unread,
+            complaints,
+            staged_for_makefiles,
+            staged_for_goals,
+            clean_wrappers,
+            units,
+            deferred,
+            settled,
+            makeflags,
+            job_budget,
+        })
+    }
+}
+
+impl Writer<'_> {
+    fn names(&mut self, names: &[Vec<u8>]) -> io::Result<()> {
+        self.len(names.len())?;
+        names.iter().try_for_each(|name| self.bytes(name))
+    }
+
+    fn recipe_environment(
+        &mut self,
+        environment: &[(OsString, Option<OsString>)],
+    ) -> io::Result<()> {
+        self.len(environment.len())?;
+        for (name, value) in environment {
+            self.bytes(name.as_encoded_bytes())?;
+            self.option(value.as_ref(), |w, value| w.bytes(value.as_encoded_bytes()))?;
+        }
+        Ok(())
+    }
+
+    fn layout(&mut self, layout: &CommandLayout) -> io::Result<()> {
+        self.bytes(layout.command_directory.as_os_str().as_encoded_bytes())?;
+        self.len(layout.recipe_environment.len())?;
+        for (name, value) in &layout.recipe_environment {
+            self.bytes(name)?;
+            self.option(value.as_deref(), Writer::bytes)?;
+        }
+        self.bytes(layout.root_directory.as_os_str().as_encoded_bytes())?;
+        self.u8(u8::from(layout.root))?;
+        self.option(layout.unreadable.as_deref(), |w, why| {
+            w.bytes(why.as_bytes())
+        })
+    }
+
+    fn steps(&mut self, steps: &[LateStep]) -> io::Result<()> {
+        self.len(steps.len())?;
+        for step in steps {
+            match &step.launch {
+                Launch::Shell(command) => {
+                    self.u8(0)?;
+                    self.bytes(command)?;
+                }
+                Launch::Direct(direct) => {
+                    self.u8(1)?;
+                    self.len(direct.argv.len())?;
+                    for word in &direct.argv {
+                        self.bytes(word)?;
+                    }
+                    self.bytes(direct.directory.as_os_str().as_encoded_bytes())?;
+                    self.recipe_environment(&direct.environment)?;
+                    self.bytes(direct.diagnostic_prefix.as_bytes())?;
+                    self.u8(u8::from(direct.starts_no_process))?;
+                }
+                Launch::Refused(why) => {
+                    self.u8(2)?;
+                    self.bytes(why.as_bytes())?;
+                }
+            }
+            self.u8(u8::from(step.ignore_errors))?;
+            self.u8(u8::from(step.runs_while_pretending))?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Reader<'_> {
+    fn bool(&mut self) -> Option<bool> {
+        match self.u8()? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
+    fn string(&mut self) -> Option<String> {
+        String::from_utf8(self.bytes()?.to_vec()).ok()
+    }
+
+    fn names(&mut self) -> Option<Vec<Vec<u8>>> {
+        let count = self.len()?;
+        if count > self.bytes.len() {
+            return None;
+        }
+        (0..count)
+            .map(|_| self.bytes().map(<[u8]>::to_vec))
+            .collect()
+    }
+
+    fn recipe_environment(&mut self) -> Option<Vec<(OsString, Option<OsString>)>> {
+        let mut environment = Vec::new();
+        for _ in 0..self.len()? {
+            let name = os_string(self.bytes()?);
+            let value = self.option(|r| r.bytes().map(os_string))?;
+            environment.push((name, value));
+        }
+        Some(environment)
+    }
+
+    fn layout(&mut self) -> Option<CommandLayout> {
+        let command_directory = PathBuf::from(os_string(self.bytes()?));
+        let mut recipe_environment = Vec::new();
+        for _ in 0..self.len()? {
+            let name = self.bytes()?.to_vec();
+            let value = self.option(|r| r.bytes().map(<[u8]>::to_vec))?;
+            recipe_environment.push((name, value));
+        }
+        let root_directory = PathBuf::from(os_string(self.bytes()?));
+        let root = self.bool()?;
+        let unreadable = self.option(Reader::string)?;
+        Some(CommandLayout {
+            command_directory,
+            recipe_environment,
+            root_directory,
+            root,
+            unreadable,
+        })
+    }
+
+    fn steps(&mut self) -> Option<Vec<LateStep>> {
+        let count = self.len()?;
+        if count > self.bytes.len() {
+            return None;
+        }
+        let mut steps = Vec::with_capacity(count);
+        for _ in 0..count {
+            let launch = match self.u8()? {
+                0 => Launch::Shell(BString::from(self.bytes()?)),
+                1 => {
+                    let mut argv = Vec::new();
+                    for _ in 0..self.len()? {
+                        argv.push(BString::from(self.bytes()?));
+                    }
+                    let directory = PathBuf::from(os_string(self.bytes()?));
+                    let environment = self.recipe_environment()?;
+                    let diagnostic_prefix = self.string()?;
+                    let starts_no_process = self.bool()?;
+                    Launch::Direct(Box::new(DirectLaunch {
+                        argv,
+                        directory,
+                        environment,
+                        diagnostic_prefix,
+                        starts_no_process,
+                    }))
+                }
+                2 => Launch::Refused(self.string()?),
+                _ => return None,
+            };
+            steps.push(LateStep {
+                launch,
+                ignore_errors: self.bool()?,
+                runs_while_pretending: self.bool()?,
+            });
+        }
+        Some(steps)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +683,7 @@ mod tests {
             off_journal: Vec::new(),
             environment: Vec::new(),
             directory: PathBuf::from("/x"),
+            origin: None,
         }
     }
 
@@ -345,6 +715,7 @@ mod tests {
                         (Bytes::from_static(b"UNSET"), None),
                     ],
                     sources: vec![(OsString::from("Makefile"), 42)],
+                    origin: None,
                 },
                 UnitArtifact {
                     key: b"sub".to_vec(),
@@ -353,8 +724,64 @@ mod tests {
                     off_journal: Vec::new(),
                     environment: Vec::new(),
                     sources: Vec::new(),
+                    origin: Some(ChildOrigin {
+                        words: vec![BString::from("make"), BString::from("-C"), "sub".into()],
+                        directory: PathBuf::from("/src/sub"),
+                        parent_makeflags: "w".to_owned(),
+                        gnumakeflags: None,
+                        environment: std::sync::Arc::new(vec![(
+                            OsString::from("CC"),
+                            OsString::from("gcc"),
+                        )]),
+                        level: 1,
+                        recipe_environment: vec![(OsString::from("MAKELEVEL"), Some("2".into()))],
+                    }),
                 },
             ],
+            build: Some(BuildArtifact {
+                remakes: vec![b"gen.mk".to_vec()],
+                forgiven: vec![b"gen.mk".to_vec()],
+                unread: Vec::new(),
+                complaints: vec![(b"gen.mk".to_vec(), "no such file".to_owned())],
+                staged_for_makefiles: Vec::new(),
+                staged_for_goals: vec![b"gen.txt".to_vec(), b"sub/out".to_vec()],
+                clean_wrappers: vec![(b"lib".to_vec(), vec![b"lib/a.o".to_vec()])],
+                units: vec![RecipeUnitArtifact {
+                    key: b"root".to_vec(),
+                    layout: CommandLayout {
+                        command_directory: PathBuf::from("/src"),
+                        recipe_environment: vec![(b"MAKELEVEL".to_vec(), Some(b"1".to_vec()))],
+                        root_directory: PathBuf::from("/src"),
+                        root: true,
+                        unreadable: Some("bad export".to_owned()),
+                    },
+                    directory: PathBuf::from("/src"),
+                }],
+                deferred: vec![(b"a.o".to_vec(), b"root".to_vec(), 3)],
+                settled: vec![(
+                    b"b.o".to_vec(),
+                    SettledSteps::from_parts(
+                        vec![LateStep {
+                            launch: Launch::Direct(Box::new(DirectLaunch {
+                                argv: vec![BString::from("cc"), BString::from("b.c")],
+                                directory: PathBuf::new(),
+                                environment: vec![(OsString::from("X"), None)],
+                                diagnostic_prefix: "make: cc: ".to_owned(),
+                                starts_no_process: false,
+                            })),
+                            ignore_errors: true,
+                            runs_while_pretending: false,
+                        }],
+                        Some(vec![LateStep {
+                            launch: Launch::Refused("no value for X".to_owned()),
+                            ignore_errors: false,
+                            runs_while_pretending: true,
+                        }]),
+                    ),
+                )],
+                makeflags: "w -j8".to_owned(),
+                job_budget: 8,
+            }),
         }
     }
 
@@ -370,8 +797,8 @@ mod tests {
         for unit in &artifact.units {
             let _ = writeln!(
                 text,
-                "unit {:?} {:?} env={:?} sources={:?}",
-                unit.key, unit.directory, unit.environment, unit.sources
+                "unit {:?} {:?} env={:?} sources={:?} origin={:?}",
+                unit.key, unit.directory, unit.environment, unit.sources, unit.origin
             );
             for (label, answers) in [("ground", &unit.ground), ("off", &unit.off_journal)] {
                 for answer in answers {
@@ -387,7 +814,67 @@ mod tests {
                 }
             }
         }
+        if let Some(build) = &artifact.build {
+            let _ = writeln!(
+                text,
+                "build remakes={:?} forgiven={:?} unread={:?} complaints={:?} makefiles={:?} goals={:?} clean={:?} makeflags={:?} budget={}",
+                build.remakes,
+                build.forgiven,
+                build.unread,
+                build.complaints,
+                build.staged_for_makefiles,
+                build.staged_for_goals,
+                build.clean_wrappers,
+                build.makeflags,
+                build.job_budget
+            );
+            for unit in &build.units {
+                let layout = &unit.layout;
+                let _ = writeln!(
+                    text,
+                    "  unit {:?} {:?} {:?} {:?} {:?} root={} {:?}",
+                    unit.key,
+                    unit.directory,
+                    layout.command_directory,
+                    layout.recipe_environment,
+                    layout.root_directory,
+                    layout.root,
+                    layout.unreadable
+                );
+            }
+            for (output, unit, recipe) in &build.deferred {
+                let _ = writeln!(text, "  deferred {output:?} {unit:?} {recipe}");
+            }
+            for (output, steps) in &build.settled {
+                let (ordinary, remaking) = steps.parts();
+                let _ = writeln!(
+                    text,
+                    "  settled {output:?} {:?} {:?}",
+                    ordinary.iter().map(describe_step).collect::<Vec<_>>(),
+                    remaking.map(|steps| steps.iter().map(describe_step).collect::<Vec<_>>())
+                );
+            }
+        }
         text
+    }
+
+    fn describe_step(step: &LateStep) -> String {
+        let launch = match &step.launch {
+            Launch::Shell(command) => format!("shell {command:?}"),
+            Launch::Direct(direct) => format!(
+                "direct {:?} {:?} {:?} {:?} {}",
+                direct.argv,
+                direct.directory,
+                direct.environment,
+                direct.diagnostic_prefix,
+                direct.starts_no_process
+            ),
+            Launch::Refused(why) => format!("refused {why:?}"),
+        };
+        format!(
+            "{launch} ignore={} pretending={}",
+            step.ignore_errors, step.runs_while_pretending
+        )
     }
 
     #[test]

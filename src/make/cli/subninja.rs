@@ -4,7 +4,7 @@ use super::{
     Action, GNUMAKEFLAGS, MAKELEVEL, carry_command_line_evals, compilation_key, named_makefiles,
     parse, path_of, propagated_makeflags, record_invocation_variables, session_for,
 };
-use crate::make::{Compilation, CompilationContext, MakeError};
+use crate::make::{ChildOrigin, Compilation, CompilationContext, MakeError};
 use crate::util::{BString, ByteSlice};
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt as _;
@@ -97,45 +97,81 @@ pub(in crate::make) fn compile(
         .invocation_environment
         .clone()
         .expect("recording a child invocation preserves its environment");
+    let origin = ChildOrigin {
+        words,
+        directory: directory.clone(),
+        parent_makeflags: parent.makeflags.clone(),
+        gnumakeflags,
+        environment: std::sync::Arc::clone(&environment),
+        level,
+        recipe_environment: recipe_environment.clone(),
+    };
     Ok(Compilation {
         session,
         shuffle: invocation.shuffle,
-        context: CompilationContext {
-            diagnostics: std::sync::Arc::clone(&parent.diagnostics),
-            interrupts: std::sync::Arc::clone(&parent.interrupts),
-            census: std::sync::Arc::clone(&parent.census),
-            scripts: std::sync::Arc::clone(&parent.scripts),
-            // One count for the whole compilation: an evaluation anywhere in it
-            // moves the ground for every unit's freshness scan, not only for
-            // the unit that ran it.
-            ground: std::sync::Arc::clone(&parent.ground),
-            reporting: parent.reporting,
-            root_directory: parent.root_directory.clone(),
+        context: child_context(
+            parent,
             directory,
             path_prefix,
-            // What the parent's composition makes around its children; the
-            // parent narrows it per recipe before compiling the child.
-            enclosing: std::sync::Arc::clone(&parent.enclosing),
             makeflags,
-            always_make: parent.always_make,
-            restarted: parent.restarted,
-            // Deliberately not `parent.assumed_new` or `parent.assumed_old`.
-            // GNU Make puts neither `-W` nor `-o` in `MAKEFLAGS`, so a
-            // recursive child is never told about a file the parent was asked
-            // to pretend was new or old — and the names are the parent's own
-            // directory's in any case. Measured: under `make -o sub` the child
-            // remakes `sub` exactly as it would have without the switch.
-            assumed_new: Vec::new(),
-            assumed_old: Vec::new(),
             level,
-            jobs: parent.jobs,
-            job_group: parent.job_group.clone(),
-            parallel_reads: parent.parallel_reads,
             environment,
             recipe_environment,
-        },
+            origin,
+        ),
         cache_key,
     })
+}
+
+/// The context a composed child compiles under: its parent's, with the fields
+/// a child settles for itself replaced.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one struct's fields, each already computed"
+)]
+fn child_context(
+    parent: &CompilationContext,
+    directory: PathBuf,
+    path_prefix: PathBuf,
+    makeflags: String,
+    level: usize,
+    environment: std::sync::Arc<Vec<(OsString, OsString)>>,
+    recipe_environment: Vec<(OsString, Option<OsString>)>,
+    origin: ChildOrigin,
+) -> CompilationContext {
+    CompilationContext {
+        diagnostics: std::sync::Arc::clone(&parent.diagnostics),
+        interrupts: std::sync::Arc::clone(&parent.interrupts),
+        census: std::sync::Arc::clone(&parent.census),
+        scripts: std::sync::Arc::clone(&parent.scripts),
+        // One count for the whole compilation: an evaluation anywhere in it
+        // moves the ground for every unit's freshness scan, not only for the
+        // unit that ran it.
+        ground: std::sync::Arc::clone(&parent.ground),
+        reporting: parent.reporting,
+        root_directory: parent.root_directory.clone(),
+        directory,
+        path_prefix,
+        // What the parent's composition makes around its children; the parent
+        // narrows it per recipe before compiling the child.
+        enclosing: std::sync::Arc::clone(&parent.enclosing),
+        makeflags,
+        always_make: parent.always_make,
+        restarted: parent.restarted,
+        // Deliberately not `parent.assumed_new` or `parent.assumed_old`. GNU
+        // Make puts neither `-W` nor `-o` in `MAKEFLAGS`, so a recursive child
+        // is never told about a file the parent was asked to pretend was new
+        // or old — and the names are the parent's own directory's in any case.
+        assumed_new: Vec::new(),
+        assumed_old: Vec::new(),
+        level,
+        jobs: parent.jobs,
+        job_group: parent.job_group.clone(),
+        parallel_reads: parent.parallel_reads,
+        environment,
+        recipe_environment,
+        origin: Some(std::sync::Arc::new(origin)),
+    }
 }
 
 fn invocation_words(

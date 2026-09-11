@@ -295,5 +295,6 @@ pub(super) fn compilation_context(
         // never be recognised as done.
         environment: descendant_environment(session),
         recipe_environment,
+        origin: None,
     }
 }

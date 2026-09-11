@@ -29,6 +29,13 @@ use kati::build_sink::SinkEdge;
 use std::os::unix::ffi::OsStrExt;
 
 impl GraphSink {
+    /// The recursive wrappers the freshness scan settled clean, with the
+    /// staged work each was read from. A run that loads this graph has to take
+    /// that compile-time freshness verdict again.
+    pub(crate) fn take_clean_wrappers(&mut self) -> Vec<(super::Edge, Vec<super::Node>)> {
+        std::mem::take(&mut self.clean_wrappers)
+    }
+
     /// The enclosing unit's node for the path this child's node names, where
     /// the child's name is a name for the enclosing unit's file.
     ///

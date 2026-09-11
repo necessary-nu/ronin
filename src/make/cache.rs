@@ -20,7 +20,7 @@
 //! format version is in it, so an artifact this build cannot read is an
 //! artifact it never opens rather than one it misreads.
 
-mod artifact;
+pub(crate) mod artifact;
 
 use crate::htab::rapidhashv1;
 use std::path::{Path, PathBuf};

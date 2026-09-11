@@ -944,25 +944,9 @@ pub(super) fn build_compiler_inputs(
     // a pass whose replay diverged recorded answers to a ground that had moved,
     // which is precisely what must not be handed on.
     let mut loaded = loaded;
-    for (unit, journal) in loaded.take_units_read() {
-        // The record takes EVERY pass's answers, where the journals above keep
-        // only the first pass's. A pass whose replay diverged recorded answers
-        // to a ground that had moved, and a record that outlives the
-        // invocation is the one thing that has to see that rather than discard
-        // it: it would otherwise describe a graph composed against two
-        // grounds and check it against one.
-        settled.record.absorb(
-            &unit,
-            &journal.ground,
-            &journal.off_journal,
-            &journal.environment,
-        );
-        std::sync::Arc::make_mut(&mut settled.read_units)
-            .entry(unit)
-            .or_insert(journal);
-    }
+    absorb_reads(&mut loaded, settled);
     let snapshot = snapshot_if_settling(&loaded);
-    let (mut graph, mut read) = Read::taken_from(loaded);
+    let (mut graph, mut read) = gather_for_cache(loaded, settled);
     let mut recipes = read.recipes.take();
     // Make keeps no state beside the build, so there is nothing to open and
     // nothing an opening could complain about.
@@ -1042,6 +1026,144 @@ pub(super) fn build_compiler_inputs(
         output,
         diagnostics,
     )
+}
+
+/// Add one pass's staged work to the union in `settled`, keeping first
+/// appearances so the union is in pass order.
+fn stage_paths(
+    settled: &mut crate::make::Groundwork,
+    graph: &BuildGraph,
+    for_makefiles: &[Node],
+    for_goals: &[Node],
+) {
+    for (union, staged) in [
+        (&mut settled.staged_for_makefiles, for_makefiles),
+        (&mut settled.staged_for_goals, for_goals),
+    ] {
+        for node in staged {
+            let path = graph.path(*node);
+            if !union.iter().any(|known| known == path) {
+                union.push(path.to_vec());
+            }
+        }
+    }
+}
+
+/// Take this pass's staged work into the union, and — on the pass that can
+/// settle — everything the build over the loaded graph will need.
+fn gather_for_cache(
+    mut loaded: crate::make::Loaded,
+    settled: &mut crate::make::Groundwork,
+) -> (BuildGraph, Read) {
+    let settling = loaded.evaluation_boundaries().is_empty();
+    let (makeflags, job_budget) = loaded.settled_invocation();
+    let makeflags = makeflags.to_owned();
+    let clean_wrappers = std::mem::take(&mut loaded.clean_wrappers);
+    let unread_paths = paths_of(&loaded.graph, loaded.unread_remake_targets());
+    let (graph, read) = Read::taken_from(loaded);
+    stage_paths(settled, &graph, &read.makefile_staged, &read.staged);
+    if settling {
+        settled.build = Some(build_artifact(
+            &graph,
+            &read,
+            unread_paths,
+            clean_wrappers,
+            (makeflags, job_budget),
+            settled,
+        ));
+    }
+    (graph, read)
+}
+
+/// Take this pass's reads into the record and the journals.
+///
+/// The record takes EVERY pass's answers, where the journals keep only the
+/// first pass's. A pass whose replay diverged recorded answers to a ground
+/// that had moved, and a record that outlives the invocation is the one thing
+/// that has to see that rather than discard it: it would otherwise describe a
+/// graph composed against two grounds and check it against one.
+fn absorb_reads(loaded: &mut crate::make::Loaded, settled: &mut crate::make::Groundwork) {
+    for (unit, journal) in loaded.take_units_read() {
+        settled.record.absorb(
+            &unit,
+            &journal.ground,
+            &journal.off_journal,
+            &journal.environment,
+        );
+        std::sync::Arc::make_mut(&mut settled.read_units)
+            .entry(unit)
+            .or_insert(journal);
+    }
+}
+
+/// What the build over the settled graph needs beside the graph, as the pass
+/// that settled has it in hand.
+fn build_artifact(
+    graph: &BuildGraph,
+    read: &Read,
+    unread: Vec<Vec<u8>>,
+    clean_wrappers: Vec<(crate::frontend::Edge, Vec<Node>)>,
+    (makeflags, job_budget): (String, usize),
+    settled: &crate::make::Groundwork,
+) -> crate::make::cache::artifact::BuildArtifact {
+    use crate::make::cache::artifact::{BuildArtifact, RecipeUnitArtifact};
+    let output_of = |edge: crate::graph::EdgeId| {
+        let arenas = graph.arenas();
+        arenas.node_path(arenas.edge(edge).out[0]).to_vec()
+    };
+    let recorded = read.recipes.as_deref().map(|recipes| recipes.recorded());
+    BuildArtifact {
+        remakes: paths_of(graph, &read.remakes),
+        forgiven: paths_of(graph, &read.forgiven),
+        unread,
+        complaints: read
+            .complaints
+            .iter()
+            .map(|(node, complaint)| (graph.path(*node).to_vec(), complaint.clone()))
+            .collect(),
+        staged_for_makefiles: settled.staged_for_makefiles.clone(),
+        staged_for_goals: settled.staged_for_goals.clone(),
+        clean_wrappers: clean_wrappers
+            .into_iter()
+            .map(|(wrapper, staged)| (output_of(wrapper.id()), paths_of(graph, &staged)))
+            .collect(),
+        units: recorded
+            .as_ref()
+            .map(|recorded| {
+                recorded
+                    .units
+                    .iter()
+                    .map(|(key, layout, directory)| RecipeUnitArtifact {
+                        key: key.to_vec(),
+                        layout: (*layout).clone(),
+                        directory: (*directory).to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        deferred: recorded
+            .as_ref()
+            .map(|recorded| {
+                recorded
+                    .deferred
+                    .iter()
+                    .map(|(edge, unit, recipe)| (output_of(*edge), unit.to_vec(), *recipe))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        settled: recorded
+            .as_ref()
+            .map(|recorded| {
+                recorded
+                    .settled
+                    .iter()
+                    .map(|(edge, steps)| (output_of(*edge), (*steps).clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        makeflags,
+        job_budget,
+    }
 }
 
 /// The graph as the composition left it, for the cache, when this pass is

@@ -1784,7 +1784,18 @@ fn prepare_graph(
         emit_raised(root.diagnostics, diagnostics, held)?;
         match settlement? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
-            Settlement::Restart => restarts = restarts.saturating_add(1),
+            Settlement::Restart => {
+                // The read starts over on new text, so the composition it
+                // produces is a new one. The staged-work union describes the
+                // old one and must not be carried into it — the boundaries
+                // that survive a restart are re-staged by the new read, and a
+                // path the new text no longer stages would otherwise be built
+                // from a record for a graph that never had it.
+                settled.staged_for_makefiles.clear();
+                settled.staged_for_goals.clear();
+                settled.build = None;
+                restarts = restarts.saturating_add(1);
+            }
             Settlement::Staged => {}
             Settlement::Settled(settled_graph) => {
                 let crate::make::cli::remake::SettledGraph {

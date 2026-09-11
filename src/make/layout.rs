@@ -643,6 +643,24 @@ pub(crate) struct SettledSteps {
 }
 
 impl SettledSteps {
+    /// The two phases' launches: the ordinary ones, and the makefile update's
+    /// where they differ.
+    pub(crate) fn parts(&self) -> (&[crate::build::LateStep], Option<&[crate::build::LateStep]>) {
+        (&self.ordinary, self.while_remaking.as_deref())
+    }
+
+    /// Steps read back from a record.
+    #[cfg(test)]
+    pub(crate) const fn from_parts(
+        ordinary: Vec<crate::build::LateStep>,
+        while_remaking: Option<Vec<crate::build::LateStep>>,
+    ) -> Self {
+        Self {
+            ordinary,
+            while_remaking,
+        }
+    }
+
     /// Launches the two phases share, because nothing in them would move.
     pub(crate) const fn same(steps: Vec<crate::build::LateStep>) -> Self {
         Self {

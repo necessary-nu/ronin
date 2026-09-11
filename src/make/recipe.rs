@@ -42,6 +42,8 @@ struct RecipeUnit {
     /// recipes against the same variables. See [`super::CarriedRead`].
     // [spec:ronin:req:make.no-ambient-state]
     read: CarriedRead,
+    /// The unit's compilation key, which is how a record names it.
+    key: Vec<u8>,
     recipes: KatiRecipes,
     layout: CommandLayout,
     /// Where this unit's Makefile was read, and so where its recipes expand.
@@ -127,6 +129,7 @@ impl PendingRecipes {
     /// the edge that runs each one.
     pub(crate) fn admit(
         &mut self,
+        key: Vec<u8>,
         read: CarriedRead,
         recipes: KatiRecipes,
         layout: CommandLayout,
@@ -136,6 +139,7 @@ impl PendingRecipes {
         let unit = self.units.len();
         self.units.push(RecipeUnit {
             read,
+            key,
             recipes,
             layout,
             directory,
@@ -161,6 +165,36 @@ impl PendingRecipes {
     pub(crate) const fn units(&self) -> usize {
         self.units.len()
     }
+
+    /// Everything a record has to hold about the recipes this build still
+    /// holds: each unit that left one, each deferred edge with the unit that
+    /// expands it, and each edge whose launches the compiler already read.
+    pub(crate) fn recorded(&self) -> RecordedRecipes<'_> {
+        RecordedRecipes {
+            units: self
+                .units
+                .iter()
+                .map(|unit| (unit.key.as_slice(), &unit.layout, unit.directory.as_path()))
+                .collect(),
+            deferred: self
+                .edges
+                .iter()
+                .map(|(edge, (unit, recipe))| (*edge, self.units[*unit].key.as_slice(), *recipe))
+                .collect(),
+            settled: self
+                .settled
+                .iter()
+                .map(|(edge, steps)| (*edge, steps))
+                .collect(),
+        }
+    }
+}
+
+/// What a record holds about one composition's deferred recipes.
+pub(crate) struct RecordedRecipes<'a> {
+    pub(crate) units: Vec<(&'a [u8], &'a CommandLayout, &'a Path)>,
+    pub(crate) deferred: Vec<(EdgeId, &'a [u8], DeferredRecipeId)>,
+    pub(crate) settled: Vec<(EdgeId, &'a SettledSteps)>,
 }
 
 /// Run `expand` with `directory` as the process directory.
@@ -237,6 +271,7 @@ impl LateCommands for PendingRecipes {
         };
         let RecipeUnit {
             read,
+            key: _,
             recipes,
             layout,
             directory,
