@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 /// Bumped whenever the bytes change meaning. A run whose cache directory was
 /// written by another version simply has no cache: the name is different, so
 /// the file is not there, and nothing has to detect a format it cannot parse.
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// The directory this invocation's artifact belongs in.
 ///
@@ -108,8 +108,16 @@ fn push_field(key: &mut Vec<u8>, field: &[u8]) {
     key.extend_from_slice(field);
 }
 
-/// The one file an invocation leaves behind, inside its cache directory.
+/// The two files an invocation leaves behind, inside its cache directory:
+/// what the composition read, and what it composed.
 const RECORD: &str = "record";
+const GRAPH: &str = "graph";
+
+pub(crate) fn snapshot(graph: &crate::frontend::BuildGraph) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    crate::graph::persist::write(graph, &mut bytes).ok()?;
+    Some(bytes)
+}
 
 /// What the reader checks before it believes a byte of the rest.
 ///
@@ -133,33 +141,55 @@ pub(crate) fn record(
     build_directory: &Path,
     invocation: &crate::make::cli::Invocation,
     settled: &crate::make::Groundwork,
+    graph: Option<Vec<u8>>,
 ) {
     let Some(directory) =
         directory_for(build_directory, invocation.variables(), invocation.goals())
     else {
         return;
     };
-    write(&directory, settled);
+    write(&directory, settled, graph);
 }
 
-fn write(directory: &Path, settled: &crate::make::Groundwork) {
+fn write(directory: &Path, settled: &crate::make::Groundwork, graph: Option<Vec<u8>>) {
     // A composition that answered one question two ways describes no single
     // ground, so there is nothing a later run could check it against. Leaving
     // the old record in place would be worse than leaving none: it describes a
-    // composition that is no longer the one this tree produces.
-    if settled.record.divergence().is_some() {
+    // composition that is no longer the one this tree produces. A graph that
+    // could not be written down leaves no record either, because a record on
+    // its own describes reads whose graph is not there to load.
+    let Some(graph) = graph.filter(|_| settled.record.divergence().is_none()) else {
         let _ = std::fs::remove_file(directory.join(RECORD));
+        let _ = std::fs::remove_file(directory.join(GRAPH));
         return;
-    }
+    };
     if std::fs::create_dir_all(directory).is_err() {
         return;
     }
-    let _ = crate::persistence::atomic_rewrite(&directory.join(RECORD), |out| encode(out, settled));
+    // Two files, written one after the other, can be left by an interrupted
+    // run as a new graph beside an old record or the other way round. The
+    // record names the graph it describes by digest, so a reader that finds
+    // the two apart refuses them rather than checking one against the other.
+    let digest = rapidhashv1(graph.as_slice());
+    let written =
+        crate::persistence::atomic_rewrite(&directory.join(GRAPH), |out| out.write_all(&graph));
+    if written.is_err() {
+        let _ = std::fs::remove_file(directory.join(RECORD));
+        return;
+    }
+    let _ = crate::persistence::atomic_rewrite(&directory.join(RECORD), |out| {
+        encode(out, settled, digest)
+    });
 }
 
-fn encode(out: &mut dyn std::io::Write, settled: &crate::make::Groundwork) -> std::io::Result<()> {
+fn encode(
+    out: &mut dyn std::io::Write,
+    settled: &crate::make::Groundwork,
+    graph: u64,
+) -> std::io::Result<()> {
     out.write_all(MAGIC)?;
     out.write_all(&FORMAT_VERSION.to_le_bytes())?;
+    out.write_all(&graph.to_le_bytes())?;
     let record = &settled.record;
     put_usize(out, record.units())?;
     for (unit, asked) in record.entries() {
@@ -318,5 +348,31 @@ mod tests {
     #[test]
     fn a_host_that_says_neither_has_no_cache() {
         assert_eq!(root_from(None, None), None);
+    }
+
+    #[test]
+    fn a_record_names_the_graph_beside_it() {
+        let directory = tempfile::tempdir().expect("a scratch directory");
+        let settled = crate::make::Groundwork::default();
+        write(directory.path(), &settled, Some(b"the graph".to_vec()));
+        let graph = std::fs::read(directory.path().join(GRAPH)).expect("the graph is written");
+        assert_eq!(graph, b"the graph");
+        let record = std::fs::read(directory.path().join(RECORD)).expect("the record is written");
+        let (magic, rest) = record.split_at(MAGIC.len());
+        assert_eq!(magic, MAGIC);
+        let (version, rest) = rest.split_at(4);
+        assert_eq!(version, FORMAT_VERSION.to_le_bytes());
+        let digest = u64::from_le_bytes(rest[..8].try_into().expect("eight bytes"));
+        assert_eq!(digest, rapidhashv1(graph.as_slice()));
+    }
+
+    #[test]
+    fn a_composition_with_no_graph_leaves_neither_file() {
+        let directory = tempfile::tempdir().expect("a scratch directory");
+        let settled = crate::make::Groundwork::default();
+        write(directory.path(), &settled, Some(b"the graph".to_vec()));
+        write(directory.path(), &settled, None);
+        assert!(!directory.path().join(GRAPH).exists());
+        assert!(!directory.path().join(RECORD).exists());
     }
 }

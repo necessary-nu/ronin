@@ -59,6 +59,10 @@ pub(crate) struct EnvState {
 }
 
 impl EnvState {
+    pub(crate) const fn pools(&self) -> &BTreeMap<BString, PoolId> {
+        &self.pools
+    }
+
     // [spec:ronin:def:env.envinit-fn]
     // [spec:ronin:sem:env.envinit-fn]
     pub(crate) fn new(graph: &mut Graph) -> Self {

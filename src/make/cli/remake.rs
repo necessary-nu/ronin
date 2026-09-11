@@ -46,13 +46,19 @@ pub(super) enum Settlement {
     /// for it, so this one stays out of `MAKE_RESTARTS`.
     Staged,
     /// Nothing changed. This graph is the compilation the goals build from.
-    Settled {
-        graph: Box<BuildGraph>,
-        persistence: Persistence,
-        /// The recipes that graph still holds unexpanded, which the build the
-        /// goals run has to be given.
-        recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
-    },
+    Settled(Box<SettledGraph>),
+}
+
+/// The compilation the goals build from.
+pub(super) struct SettledGraph {
+    pub(super) graph: BuildGraph,
+    pub(super) persistence: Persistence,
+    /// The recipes the graph still holds unexpanded, which the build the goals
+    /// run has to be given.
+    pub(super) recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
+    /// The graph as the composition left it, before this pass built anything
+    /// over it, for the cache. `None` where it could not be written down.
+    pub(super) snapshot: Option<Vec<u8>>,
 }
 
 pub(super) struct CompilerInputBuild<'a> {
@@ -848,7 +854,7 @@ enum AfterRemaking {
     /// Every makefile stands, and these are the three verdicts about them.
     /// The persistence comes back with them, still open for the pass that
     /// follows.
-    Stands(Persistence, SettledMakefiles),
+    Stands(Box<(Persistence, SettledMakefiles)>),
 }
 
 /// Close the persistence the makefile update wrote through, and turn what it
@@ -883,7 +889,7 @@ fn after_remaking(
             std::sync::Arc::make_mut(read_units).clear();
             Ok(AfterRemaking::Finished(Settlement::Restart))
         }
-        Settled::Stands(stands) => Ok(AfterRemaking::Stands(persistence, stands)),
+        Settled::Stands(stands) => Ok(AfterRemaking::Stands(Box::new((persistence, stands)))),
     }
 }
 
@@ -956,6 +962,7 @@ pub(super) fn build_compiler_inputs(
             .entry(unit)
             .or_insert(journal);
     }
+    let snapshot = snapshot_if_settling(&loaded);
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
     // Make keeps no state beside the build, so there is nothing to open and
@@ -1007,7 +1014,7 @@ pub(super) fn build_compiler_inputs(
         &mut settled.read_units,
     )? {
         AfterRemaking::Finished(settlement) => return Ok(settlement),
-        AfterRemaking::Stands(persistence, stands) => (persistence, stands),
+        AfterRemaking::Stands(stands) => *stands,
     };
     graph.mark_makefiles_settled(&stands.remade, &stands.unmade, &stands.questioned);
 
@@ -1030,11 +1037,28 @@ pub(super) fn build_compiler_inputs(
             graph,
             recipes,
             persistence,
+            snapshot,
         },
         reported,
         output,
         diagnostics,
     )
+}
+
+/// The graph as the composition left it, for the cache, when this pass is
+/// one that can settle.
+///
+/// Only a pass that reached no new boundary can settle, so only that pass's
+/// graph can be the one the cache keeps. Taken before the makefile update and
+/// the staged work mark it up, because what the cache describes is the
+/// composition, and the next run does that marking for itself after building
+/// the same work against its own disk.
+fn snapshot_if_settling(loaded: &crate::make::Loaded) -> Option<Vec<u8>> {
+    loaded
+        .evaluation_boundaries()
+        .is_empty()
+        .then(|| crate::make::cache::snapshot(&loaded.graph))
+        .flatten()
 }
 
 /// Everything building one read's staged work needs that is not the graph it
@@ -1086,6 +1110,7 @@ fn build_staged_work(
         mut graph,
         mut recipes,
         mut persistence,
+        snapshot,
     } = compiled;
     let paths = paths_of(&graph, remakes);
     let before = makefile_stamps(&paths, directory);
@@ -1109,6 +1134,7 @@ fn build_staged_work(
             graph,
             recipes,
             persistence,
+            snapshot,
         },
         StagedBoundary {
             boundaries,
@@ -1185,6 +1211,7 @@ struct Compiled {
     graph: BuildGraph,
     recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
     persistence: Persistence,
+    snapshot: Option<Vec<u8>>,
 }
 
 /// Turn what building the staged work came to into what this read does next.
@@ -1206,6 +1233,7 @@ fn after_staging(
         graph,
         recipes,
         persistence,
+        snapshot,
     } = compiled;
     let StagedBoundary {
         boundaries,
@@ -1227,11 +1255,12 @@ fn after_staging(
                 crate::signal::interrupted().is_some(),
             )))
         }
-        Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled {
-            graph: Box::new(graph),
+        Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled(Box::new(SettledGraph {
+            graph,
             persistence,
             recipes,
-        }),
+            snapshot,
+        }))),
         // Staged work is never forgiven, so `Lost` cannot arrive here; a
         // recursive child whose parent's prerequisites did not build has
         // nothing to be evaluated from.

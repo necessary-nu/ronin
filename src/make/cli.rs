@@ -1786,14 +1786,16 @@ fn prepare_graph(
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
             Settlement::Restart => restarts = restarts.saturating_add(1),
             Settlement::Staged => {}
-            Settlement::Settled {
-                graph,
-                persistence,
-                recipes,
-            } => {
-                crate::make::cache::record(root.directory, root.invocation, &settled);
-                return Ok(PreparedGraph::Ready {
+            Settlement::Settled(settled_graph) => {
+                let crate::make::cli::remake::SettledGraph {
                     graph,
+                    persistence,
+                    recipes,
+                    snapshot,
+                } = *settled_graph;
+                crate::make::cache::record(root.directory, root.invocation, &settled, snapshot);
+                return Ok(PreparedGraph::Ready {
+                    graph: Box::new(graph),
                     recipes,
                     persistence: Some(persistence),
                     invocation: Box::new(effective_invocation),

@@ -284,10 +284,10 @@ impl std::error::Error for FrontendError {}
 // [spec:ronin:req:frontend.graph-construction]
 pub struct BuildGraph {
     arenas: Graph,
-    state: EnvState,
-    defaults: Vec<NodeId>,
+    pub(crate) state: EnvState,
+    pub(crate) defaults: Vec<NodeId>,
     /// One buffer for canonicalizing the paths that are not canonical already.
-    canonical: Vec<u8>,
+    pub(crate) canonical: Vec<u8>,
 }
 
 impl Default for BuildGraph {

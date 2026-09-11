@@ -83,6 +83,11 @@ impl Names {
     pub(crate) fn name(&self, id: VarId) -> &BStr {
         self.names[id.index()].as_ref()
     }
+
+    /// How many names are interned, the reserved ones included.
+    pub(crate) const fn len(&self) -> usize {
+        self.names.len()
+    }
 }
 
 impl Default for Names {

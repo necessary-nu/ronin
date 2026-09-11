@@ -10,6 +10,7 @@ mod intermediate;
 mod marks;
 mod path;
 mod peer;
+pub(crate) mod persist;
 mod reconsidered;
 mod searched;
 mod unmade;
