@@ -1,4 +1,4 @@
-use super::{EdgeId, Graph, NodeId, nodestat_with, nodeuse};
+use super::{EdgeId, Graph, NodeId, RuleId, nodestat_with, nodeuse};
 use crate::error::GraphError;
 use crate::runtime::{FileTime, RuntimeState};
 use crate::util::{BString, IdVec};
@@ -83,6 +83,17 @@ pub(crate) struct DeferredFreshness {
 }
 
 impl Graph {
+    /// Give `edge` the phony rule for work already done, remembering the rule
+    /// it wore. An edge already phony is remembered under nothing, so putting
+    /// the rules back leaves it phony.
+    pub(crate) fn mark_prebuilt(&mut self, edge: EdgeId, phony: RuleId) {
+        let previous = self.edge(edge).rule;
+        if previous != Some(phony) {
+            self.prebuilt.push((edge, previous));
+            self.edge_mut(edge).rule = Some(phony);
+        }
+    }
+
     /// Every edge that names a `dyndep` binding, in the order they were
     /// resolved.
     pub(crate) fn dyndep_edges(&self) -> &[EdgeId] {

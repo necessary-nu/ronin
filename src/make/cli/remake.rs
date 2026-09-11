@@ -953,7 +953,6 @@ pub(super) fn build_compiler_inputs(
         // grounds and check it against one.
         settled.record.absorb(
             &unit,
-            &journal.directory,
             &journal.ground,
             &journal.off_journal,
             &journal.environment,

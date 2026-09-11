@@ -20,6 +20,8 @@
 //! format version is in it, so an artifact this build cannot read is an
 //! artifact it never opens rather than one it misreads.
 
+mod artifact;
+
 use crate::htab::rapidhashv1;
 use std::path::{Path, PathBuf};
 
@@ -28,7 +30,7 @@ use std::path::{Path, PathBuf};
 /// Bumped whenever the bytes change meaning. A run whose cache directory was
 /// written by another version simply has no cache: the name is different, so
 /// the file is not there, and nothing has to detect a format it cannot parse.
-pub(crate) const FORMAT_VERSION: u32 = 2;
+pub(crate) const FORMAT_VERSION: u32 = 3;
 
 /// The directory this invocation's artifact belongs in.
 ///
@@ -119,12 +121,6 @@ pub(crate) fn snapshot(graph: &crate::frontend::BuildGraph) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// What the reader checks before it believes a byte of the rest.
-///
-/// The version is in the directory name too, so a mismatch here is a file
-/// written by something else entirely rather than by an older Ronin.
-const MAGIC: &[u8] = b"ronin-make-record\x00";
-
 /// Leave a record of everything this composition read, for the next
 /// invocation to check the ground against.
 ///
@@ -177,94 +173,8 @@ fn write(directory: &Path, settled: &crate::make::Groundwork, graph: Option<Vec<
         let _ = std::fs::remove_file(directory.join(RECORD));
         return;
     }
-    let _ = crate::persistence::atomic_rewrite(&directory.join(RECORD), |out| {
-        encode(out, settled, digest)
-    });
-}
-
-fn encode(
-    out: &mut dyn std::io::Write,
-    settled: &crate::make::Groundwork,
-    graph: u64,
-) -> std::io::Result<()> {
-    out.write_all(MAGIC)?;
-    out.write_all(&FORMAT_VERSION.to_le_bytes())?;
-    out.write_all(&graph.to_le_bytes())?;
-    let record = &settled.record;
-    put_usize(out, record.units())?;
-    for (unit, asked) in record.entries() {
-        put_bytes(out, unit)?;
-        put_bytes(out, asked.directory().as_os_str().as_encoded_bytes())?;
-
-        put_usize(out, asked.len())?;
-        for ((question, text), answered) in asked.answers() {
-            out.write_all(&[question_tag(*question)])?;
-            put_bytes(out, text)?;
-            put_bytes(out, &answered.answer)?;
-            match answered.status {
-                None => out.write_all(&[0])?,
-                Some(status) => {
-                    out.write_all(&[1])?;
-                    out.write_all(&status.to_le_bytes())?;
-                }
-            }
-        }
-
-        put_usize(out, asked.environment().count())?;
-        for (name, value) in asked.environment() {
-            put_bytes(out, name)?;
-            match value {
-                None => out.write_all(&[0])?,
-                Some(value) => {
-                    out.write_all(&[1])?;
-                    put_bytes(out, value)?;
-                }
-            }
-        }
-
-        // The makefiles this unit read, each with a digest of the bytes it was
-        // given. A digest rather than a timestamp because a timestamp answers
-        // a different question: a file rewritten to the same contents is the
-        // same read, and one restored from a backup with an old date is not.
-        // `rapidhashv1` is fixed-seed, which is what lets one run compare
-        // against another's.
-        let sources = settled
-            .read_units
-            .get(unit)
-            .map_or(&[][..], |journal| &journal.sources);
-        put_usize(out, sources.len())?;
-        for (name, contents) in sources {
-            put_bytes(out, name.as_encoded_bytes())?;
-            out.write_all(&rapidhashv1(contents.as_ref()).to_le_bytes())?;
-        }
-    }
-    Ok(())
-}
-
-/// One byte standing for a kind of question.
-///
-/// Written out rather than derived from the enum's own ordering, so that
-/// adding a variant to [`kati::session::GroundQuestion`] cannot silently
-/// change what an already-written record means.
-const fn question_tag(question: kati::session::GroundQuestion) -> u8 {
-    use kati::session::GroundQuestion as Q;
-    match question {
-        Q::Shell => 1,
-        Q::Wildcard => 2,
-        Q::RealPath => 3,
-        Q::FileRead => 4,
-        Q::Glob => 5,
-        Q::Include => 6,
-    }
-}
-
-fn put_usize(out: &mut dyn std::io::Write, value: usize) -> std::io::Result<()> {
-    out.write_all(&(value as u64).to_le_bytes())
-}
-
-fn put_bytes(out: &mut dyn std::io::Write, value: &[u8]) -> std::io::Result<()> {
-    put_usize(out, value.len())?;
-    out.write_all(value)
+    let artifact = artifact::Artifact::of(settled, digest);
+    let _ = crate::persistence::atomic_rewrite(&directory.join(RECORD), |out| artifact.encode(out));
 }
 
 #[cfg(test)]
@@ -358,12 +268,8 @@ mod tests {
         let graph = std::fs::read(directory.path().join(GRAPH)).expect("the graph is written");
         assert_eq!(graph, b"the graph");
         let record = std::fs::read(directory.path().join(RECORD)).expect("the record is written");
-        let (magic, rest) = record.split_at(MAGIC.len());
-        assert_eq!(magic, MAGIC);
-        let (version, rest) = rest.split_at(4);
-        assert_eq!(version, FORMAT_VERSION.to_le_bytes());
-        let digest = u64::from_le_bytes(rest[..8].try_into().expect("eight bytes"));
-        assert_eq!(digest, rapidhashv1(graph.as_slice()));
+        let artifact = artifact::Artifact::decode(&record).expect("the record decodes");
+        assert_eq!(artifact.graph, rapidhashv1(graph.as_slice()));
     }
 
     #[test]

@@ -908,7 +908,7 @@ impl BuildGraph {
                     activations,
                 )
             };
-            self.arenas.edge_mut(edge).rule = Some(phony.0);
+            self.arenas.mark_prebuilt(edge, phony.0);
             work.extend(inputs);
             work.extend(validations);
             work.extend(activations);

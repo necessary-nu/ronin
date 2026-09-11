@@ -357,6 +357,15 @@ pub(crate) struct Graph {
     /// reference where the name would have gone. Beside the arena for the same
     /// reason: no manifest edge has one.
     settled_names: crate::htab::RapidHashMap<EdgeId, SettledNames>,
+    /// The rule each edge wore before a settled boundary's staged work replaced
+    /// it with phony, in the order they were replaced. See
+    /// [`crate::frontend::BuildGraph::mark_subgraphs_prebuilt`].
+    ///
+    /// Kept because the phony rule says work already done THIS invocation,
+    /// and a graph written to a file and loaded by another invocation has to
+    /// do that work again before it may say so. Empty for every graph a
+    /// manifest describes.
+    prebuilt: Vec<(EdgeId, Option<RuleId>)>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,

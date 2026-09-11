@@ -39,7 +39,7 @@ use {
 
 const MAGIC: &[u8] = b"ronin-graph\x00";
 /// Bumped whenever the bytes change meaning.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 pub(crate) fn write(graph: &BuildGraph, out: &mut dyn Write) -> io::Result<()> {
     let (arenas, state, defaults) = (graph.arenas(), &graph.state, &graph.defaults);
@@ -184,6 +184,11 @@ fn write_side_tables(w: &mut Writer<'_>, arenas: &super::Graph) -> io::Result<()
         }
         Ok(())
     })?;
+    w.len(arenas.prebuilt.len())?;
+    for (edge, rule) in &arenas.prebuilt {
+        w.len(edge.index())?;
+        w.option(rule.map(RuleId::index), Writer::len)?;
+    }
     w.option(arenas.phony_rule.map(RuleId::index), Writer::len)?;
     w.option(arenas.console_pool.map(PoolId::index), Writer::len)
 }
@@ -570,6 +575,11 @@ fn read_side_tables(r: &mut Reader<'_>, counts: Counts, arenas: &mut Graph) -> O
             },
         );
     }
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let rule = r.option(|r| r.id(counts.rules).map(RuleId::from_index))?;
+        arenas.prebuilt.push((edge, rule));
+    }
     arenas.phony_rule = r.option(|r| r.id(counts.rules).map(RuleId::from_index))?;
     arenas.console_pool = r.option(|r| r.id(counts.pools).map(PoolId::from_index))?;
     Some(())
@@ -830,6 +840,7 @@ fn describe_side_tables(text: &mut String, arenas: &Graph) {
         "settled",
         arenas.settled_names.iter().map(|(k, v)| (*k, v)),
     );
+    let _ = writeln!(text, "prebuilt {:?}", arenas.prebuilt);
 }
 
 #[cfg(test)]
@@ -922,6 +933,31 @@ default all
         let edges_at = MAGIC.len() + 4 + 3 * 8;
         bytes[edges_at..edges_at + 8].copy_from_slice(&0_u64.to_le_bytes());
         assert!(read(&bytes).is_none());
+    }
+
+    #[test]
+    fn a_prebuilt_mark_remembers_the_rule_it_replaced() {
+        let mut graph = graph_of(MANIFEST);
+        let phony = graph.rule(graph.root(), b"phony").expect("the phony rule");
+        let prog = graph.lookup(b"prog").expect("prog");
+        let settled = graph.mark_subgraphs_prebuilt(&[prog], phony);
+        assert_eq!(settled.len(), 3, "prog and the two objects behind it");
+        let marked = graph.arenas().prebuilt.clone();
+        assert_eq!(marked.len(), 3);
+        assert!(marked.iter().all(|(_, rule)| rule.is_some()));
+        assert_eq!(
+            graph.mark_subgraphs_prebuilt(&[prog], phony).len(),
+            3,
+            "marking again settles the same nodes"
+        );
+        assert_eq!(
+            graph.arenas().prebuilt.len(),
+            3,
+            "and remembers nothing new, because they were already phony"
+        );
+        let read_back = read(&written(&graph)).expect("the bytes hold a graph");
+        assert_eq!(describe(&read_back), describe(&graph));
+        assert_eq!(read_back.arenas().prebuilt, marked);
     }
 
     #[test]
