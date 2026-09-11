@@ -108,9 +108,19 @@ impl Default for Names {
 /// Binding tables hold a handful of entries for an edge or rule and at most a
 /// few hundred for a manifest's root scope, so one contiguous run beats a tree
 /// with a node allocation per entry.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Bindings<V> {
     entries: Vec<(VarId, V)>,
+}
+
+/// Empty whatever the value type; a derive would grant this only to values
+/// that are themselves `Default`.
+impl<V> Default for Bindings<V> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 }
 
 impl<V> Bindings<V> {

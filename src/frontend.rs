@@ -283,7 +283,7 @@ impl std::error::Error for FrontendError {}
 /// command, and the `console` pool, whose edges take the terminal.
 // [spec:ronin:req:frontend.graph-construction]
 pub struct BuildGraph {
-    arenas: Graph,
+    pub(crate) arenas: Graph,
     pub(crate) state: EnvState,
     pub(crate) defaults: Vec<NodeId>,
     /// One buffer for canonicalizing the paths that are not canonical already.

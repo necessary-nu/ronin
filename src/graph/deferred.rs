@@ -13,6 +13,7 @@ use std::path::Path;
 /// normal inputs are observed again at the scheduling boundary. Keeping the
 /// uncommon relation beside the edge arena avoids charging every manifest
 /// edge for semantics no Ninja statement can express.
+#[derive(Debug)]
 pub(crate) struct DeferredFreshness {
     pub(crate) outputs: IdVec<NodeId>,
     pub(crate) always_dirty_output: bool,

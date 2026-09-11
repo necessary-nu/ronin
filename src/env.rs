@@ -25,6 +25,7 @@ arena_id!(PoolId);
 // [spec:ronin:def:tree.treeinsert-fn]
 // [spec:ronin:sem:tree.treeinsert-fn]
 // [spec:ronin:def:env.environment]
+#[derive(Debug)]
 pub(crate) struct Environment {
     pub(crate) parent: Option<EnvironmentId>,
     pub(crate) bindings: Bindings<BString>,
@@ -32,18 +33,25 @@ pub(crate) struct Environment {
 }
 
 // [spec:ronin:def:env.rule]
+#[derive(Debug)]
 pub(crate) struct Rule {
     pub(crate) name: BString,
     pub(crate) bindings: Bindings<EvalString>,
 }
 
 // [spec:ronin:def:env.pool]
+#[derive(Debug)]
 pub(crate) struct Pool {
     pub(crate) name: BString,
     depth: Option<NonZeroUsize>,
 }
 
 impl Pool {
+    #[cfg(test)]
+    pub(crate) const fn new(name: BString, depth: Option<NonZeroUsize>) -> Self {
+        Self { name, depth }
+    }
+
     pub(crate) const fn depth(&self) -> Option<NonZeroUsize> {
         self.depth
     }
@@ -61,6 +69,13 @@ pub(crate) struct EnvState {
 impl EnvState {
     pub(crate) const fn pools(&self) -> &BTreeMap<BString, PoolId> {
         &self.pools
+    }
+
+    /// A state read back from a file, whose pools the graph in the file
+    /// declared rather than [`Self::new`].
+    #[cfg(test)]
+    pub(crate) const fn from_parts(root: EnvironmentId, pools: BTreeMap<BString, PoolId>) -> Self {
+        Self { root, pools }
     }
 
     // [spec:ronin:def:env.envinit-fn]

@@ -75,6 +75,7 @@ pub(crate) struct PathSpan {
 }
 
 // [spec:ronin:def:graph.node]
+#[derive(Debug)]
 pub(crate) struct Node {
     pub(crate) path: PathSpan,
     /// Shell-quoted form, present only when quoting actually changes the path.
@@ -100,6 +101,7 @@ pub(crate) enum FreshnessHistory {
     clippy::struct_excessive_bools,
     reason = "the lint guards a positional argument list, and this is only ever filled in by name"
 )]
+#[derive(Debug)]
 pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,

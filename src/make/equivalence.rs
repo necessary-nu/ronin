@@ -1723,6 +1723,16 @@ fn the_direct_graph_matches_the_manifest_over_the_corpus() {
 }
 
 fn compare_corpus_graphs() {
+    let mut report = Report::default();
+    let makefiles = walk_corpus(|case, directory, argv| {
+        report.record(case, compare(directory, argv));
+    });
+    report.assert_clean(makefiles);
+}
+
+/// Every run of every corpus Makefile, each in a scratch directory the process
+/// is standing in while `visit` runs. Returns how many Makefiles there were.
+fn walk_corpus(mut visit: impl FnMut(&str, &Path, Vec<OsString>)) -> usize {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("kati/testcase");
     let mut makefiles: Vec<_> = std::fs::read_dir(&corpus)
         .expect("the kati submodule is checked out")
@@ -1732,7 +1742,6 @@ fn compare_corpus_graphs() {
     makefiles.sort();
 
     let original = std::env::current_dir().expect("a working directory");
-    let mut report = Report::default();
     for makefile in &makefiles {
         let source = std::fs::read(makefile).expect("a readable testcase");
         let name = makefile.file_name().expect("a named file").to_owned();
@@ -1763,15 +1772,73 @@ fn compare_corpus_graphs() {
             }
 
             std::env::set_current_dir(directory.path()).expect("the scratch directory exists");
-            let outcome = compare(directory.path(), argv);
-            std::env::set_current_dir(&original).expect("the original directory still exists");
-            report.record(
+            visit(
                 &format!("{}#{}", name.to_string_lossy(), target.unwrap_or_default()),
-                outcome,
+                directory.path(),
+                argv,
             );
+            std::env::set_current_dir(&original).expect("the original directory still exists");
         }
     }
-    report.assert_clean(makefiles.len());
+    makefiles.len()
+}
+
+/// A graph written to a file and read back is the graph that was composed,
+/// field for field, over the whole corpus.
+///
+/// This is the oracle for the graph cache: an invocation that loads a graph
+/// rather than composing one must get exactly what composing would have given
+/// it, and every Make shape the corpus has — peers, withdrawals, searched
+/// names, double-colon joins — has to cross the file intact.
+// [spec:ronin:req:make.graph-direct/test]
+#[test]
+#[ignore = "changes the process working directory; the release gate runs it alone"]
+fn a_graph_read_back_matches_the_corpus() {
+    let mut composed = 0;
+    let mut refused = Vec::new();
+    let mut disagreed = Vec::new();
+    let makefiles = walk_corpus(|case, _, argv| {
+        let Ok(session) = Session::from_args(argv) else {
+            return;
+        };
+        let Ok(loaded) = crate::make::load_makefile(session, kati::shuffle::Shuffle::None) else {
+            refused.push(case.to_owned());
+            return;
+        };
+        composed += 1;
+        let mut bytes = Vec::new();
+        crate::graph::persist::write(&loaded.graph, &mut bytes).expect("memory takes the bytes");
+        let Some(read_back) = crate::graph::persist::read(&bytes) else {
+            disagreed.push(format!("{case}: the bytes written were refused"));
+            return;
+        };
+        let (before, after) = (
+            crate::graph::persist::describe(&loaded.graph),
+            crate::graph::persist::describe(&read_back),
+        );
+        if before != after {
+            let differing = before
+                .lines()
+                .zip(after.lines())
+                .find(|(mine, theirs)| mine != theirs)
+                .map_or_else(String::new, |(mine, theirs)| {
+                    format!("\n  {mine}\n  {theirs}")
+                });
+            disagreed.push(format!("{case}{differing}"));
+        }
+    });
+    eprintln!(
+        "graph round trip: {composed} composed, {} refused by the read, over {makefiles} makefiles",
+        refused.len()
+    );
+    assert!(
+        disagreed.is_empty(),
+        "graphs that did not survive the file: {disagreed:#?}"
+    );
+    assert!(
+        composed > 200,
+        "the corpus should compose hundreds of graphs, not {composed}"
+    );
 }
 
 /// Each `testN` target a testcase declares, or one unnamed run for a file that

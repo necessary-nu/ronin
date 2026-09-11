@@ -22,7 +22,7 @@ use std::path::Path;
 /// carries, and the name with that directory taken off — and a reference is
 /// written for the form the recipe asked for, because a reference is one word
 /// with no directory in it and halving it would answer about the reference.
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SettledView {
     /// The whole name.
     Whole,
@@ -33,6 +33,7 @@ pub(crate) enum SettledView {
 }
 
 /// One name a front end could not write down, and the name it wrote instead.
+#[derive(Debug)]
 pub(crate) struct SettledNameReference {
     /// The name the command reads the spelling from.
     pub(crate) variable: BString,
@@ -43,6 +44,7 @@ pub(crate) struct SettledNameReference {
 }
 
 /// Every such reference in one edge's command, and where they are spelt from.
+#[derive(Debug)]
 pub(crate) struct SettledNames {
     /// The directory the command runs in, and so the directory the names it
     /// reads are relative to. Empty for a command that runs where the build

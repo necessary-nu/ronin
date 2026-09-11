@@ -28,6 +28,14 @@ use crate::graph::searched::SettledView;
 use crate::names::{Bindings, VarId};
 use crate::util::{EvalPart, EvalString};
 use std::io::{self, Write};
+#[cfg(test)]
+use {
+    super::{Edge, Graph, Node},
+    crate::env::{EnvState, Environment, Pool, Rule},
+    crate::graph::searched::{SettledNameReference, SettledNames},
+    crate::graph::withdrawal::Withdrawal,
+    crate::util::{BStr, BString, IdVec},
+};
 
 const MAGIC: &[u8] = b"ronin-graph\x00";
 /// Bumped whenever the bytes change meaning.
@@ -306,6 +314,524 @@ impl Writer<'_> {
     }
 }
 
+/// How many of each arena the file says it holds, against which every
+/// identifier in it is checked.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct Counts {
+    names: usize,
+    paths: usize,
+    nodes: usize,
+    edges: usize,
+    environments: usize,
+    rules: usize,
+    pools: usize,
+}
+
+/// The graph `bytes` holds, or `None` for bytes that do not hold one.
+#[cfg(test)]
+pub(crate) fn read(bytes: &[u8]) -> Option<BuildGraph> {
+    let mut r = Reader { bytes, at: 0 };
+    if r.take(MAGIC.len())? != MAGIC || r.u32()? != VERSION {
+        return None;
+    }
+    let counts = Counts {
+        names: r.len()?,
+        paths: r.len()?,
+        nodes: r.len()?,
+        edges: r.len()?,
+        environments: r.len()?,
+        rules: r.len()?,
+        pools: r.len()?,
+    };
+    let mut arenas = Graph::default();
+    if counts.names < arenas.names.len() {
+        return None;
+    }
+    for index in 0..counts.names {
+        let name = BStr::new(r.bytes()?);
+        if index < arenas.names.len() {
+            if arenas.names.name(VarId::from_index(index)) != name {
+                return None;
+            }
+        } else if arenas.names.intern(name).index() != index {
+            return None;
+        }
+    }
+    arenas.paths = r.take(counts.paths)?.to_vec();
+    for _ in 0..counts.nodes {
+        arenas.nodes.push(Node {
+            path: r.span(counts)?,
+            shellpath: r.option(|r| r.span(counts))?,
+            generator: r.option(|r| r.id(counts.edges).map(EdgeId::from_index))?,
+            uses: r
+                .ids(counts.edges)?
+                .into_iter()
+                .map(EdgeId::from_index)
+                .collect(),
+        });
+    }
+    for _ in 0..counts.edges {
+        let edge = read_edge(&mut r, counts)?;
+        arenas.edges.push(edge);
+    }
+    for _ in 0..counts.environments {
+        let parent = r.option(|r| r.id(counts.environments).map(EnvironmentId::from_index))?;
+        let bindings = r.bindings(counts, |r| r.bytes().map(BString::from))?;
+        let mut rules = std::collections::BTreeMap::new();
+        for _ in 0..r.len()? {
+            let name = BString::from(r.bytes()?);
+            rules.insert(name, RuleId::from_index(r.id(counts.rules)?));
+        }
+        arenas.environments.push(Environment {
+            parent,
+            bindings,
+            rules,
+        });
+    }
+    for _ in 0..counts.rules {
+        let name = BString::from(r.bytes()?);
+        let bindings = r.bindings(counts, |r| r.template(counts))?;
+        arenas.rules.push(Rule { name, bindings });
+    }
+    for _ in 0..counts.pools {
+        let name = BString::from(r.bytes()?);
+        let depth = match r.option(Reader::len)? {
+            None => None,
+            Some(depth) => Some(std::num::NonZeroUsize::new(depth)?),
+        };
+        arenas.pools.push(Pool::new(name, depth));
+    }
+    index_nodes(&mut arenas, r.nodes(counts)?)?;
+    read_side_tables(&mut r, counts, &mut arenas)?;
+
+    let root = EnvironmentId::from_index(r.id(counts.environments)?);
+    let mut pools = std::collections::BTreeMap::new();
+    for _ in 0..r.len()? {
+        let name = BString::from(r.bytes()?);
+        pools.insert(name, PoolId::from_index(r.id(counts.pools)?));
+    }
+    let defaults = r.nodes(counts)?.into_iter().collect();
+    if r.at != bytes.len() {
+        return None;
+    }
+    Some(BuildGraph {
+        arenas,
+        state: EnvState::from_parts(root, pools),
+        defaults,
+        canonical: Vec::new(),
+    })
+}
+
+/// Enter `indexed` into the path index, refusing a path entered twice.
+#[cfg(test)]
+fn index_nodes(arenas: &mut Graph, indexed: IdVec<NodeId>) -> Option<()> {
+    for node in indexed {
+        let span = arenas.nodes[node.index()].path;
+        let path = &arenas.paths[span.offset as usize..][..span.len as usize];
+        let (found, vacancy) = arenas
+            .node_by_path
+            .locate(&arenas.paths, &arenas.nodes, path);
+        if found.is_some() {
+            return None;
+        }
+        arenas
+            .node_by_path
+            .fill(&arenas.paths, &arenas.nodes, node, vacancy);
+    }
+    Some(())
+}
+
+#[cfg(test)]
+fn read_edge(r: &mut Reader<'_>, counts: Counts) -> Option<Edge> {
+    let rule = r.option(|r| r.id(counts.rules).map(RuleId::from_index))?;
+    let pool = r.option(|r| r.id(counts.pools).map(PoolId::from_index))?;
+    let env = EnvironmentId::from_index(r.id(counts.environments)?);
+    let bindings = r.bindings(counts, |r| r.bytes().map(BString::from))?;
+    let (out, input, validation) = (r.nodes(counts)?, r.nodes(counts)?, r.nodes(counts)?);
+    let dyndep = r.option(|r| r.id(counts.nodes).map(NodeId::from_index))?;
+    let flags = r.u8()?;
+    let bit = |bit: u8| flags & (1 << bit) != 0;
+    let mut edge = Edge {
+        rule,
+        pool,
+        env,
+        bindings,
+        out,
+        input,
+        validation,
+        dyndep,
+        always_dirty: bit(0),
+        intermediate: bit(1),
+        has_touchable_recipe: bit(2),
+        outputs_unaliased: bit(3),
+        outputs_low_resolution: bit(4),
+        outputs_reobserved: bit(5),
+        recipe_begun: bit(6),
+        freshness_history: if bit(7) {
+            FreshnessHistory::FilesystemOnly
+        } else {
+            FreshnessHistory::BuildLogAware
+        },
+        partitions: super::EdgePartitions::default(),
+    };
+    let (explicit_inputs, non_order_only, explicit_outputs) = (r.len()?, r.len()?, r.len()?);
+    if explicit_inputs > non_order_only
+        || non_order_only > edge.input.len()
+        || explicit_outputs > edge.out.len()
+    {
+        return None;
+    }
+    edge.set_input_partitions(explicit_inputs, non_order_only);
+    edge.set_explicit_output_count(explicit_outputs);
+    Some(edge)
+}
+
+#[cfg(test)]
+fn read_side_tables(r: &mut Reader<'_>, counts: Counts, arenas: &mut Graph) -> Option<()> {
+    for _ in 0..r.len()? {
+        let node = NodeId::from_index(r.id(counts.nodes)?);
+        let edges = r
+            .ids(counts.edges)?
+            .into_iter()
+            .map(EdgeId::from_index)
+            .collect();
+        arenas.validation_uses.insert(node, edges);
+    }
+    arenas.dyndep_edges = r
+        .ids(counts.edges)?
+        .into_iter()
+        .map(EdgeId::from_index)
+        .collect();
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let freshness = r.freshness(counts)?;
+        arenas.deferred_freshness.insert(edge, freshness);
+    }
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let node = NodeId::from_index(r.id(counts.nodes)?);
+        arenas.completion_joins.insert(edge, node);
+    }
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let outputs = r.nodes(counts)?;
+        let on_error = r.bool()?;
+        arenas
+            .withdrawal
+            .insert(edge, Withdrawal { outputs, on_error });
+    }
+    arenas.unmade_makefiles = r.nodes(counts)?.into_iter().collect();
+    arenas.questioned_makefiles = r.nodes(counts)?.into_iter().collect();
+    arenas.unread_makefiles = r.nodes(counts)?.into_iter().collect();
+    arenas.invented_outputs = r.nodes(counts)?.into_iter().collect();
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let node = NodeId::from_index(r.id(counts.nodes)?);
+        arenas.forgiven_order.insert((edge, node));
+    }
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let nodes = r.nodes(counts)?;
+        arenas.peer_outputs.insert(edge, nodes);
+    }
+    arenas.disposable_outputs = r.nodes(counts)?.into_iter().collect();
+    for named in [
+        &mut arenas.searched_at,
+        &mut arenas.written_as,
+        &mut arenas.double_colon_targets,
+    ] {
+        for _ in 0..r.len()? {
+            let node = NodeId::from_index(r.id(counts.nodes)?);
+            named.insert(node, BString::from(r.bytes()?));
+        }
+    }
+    for _ in 0..r.len()? {
+        let edge = EdgeId::from_index(r.id(counts.edges)?);
+        let directory = BString::from(r.bytes()?);
+        let mut references = Vec::new();
+        for _ in 0..r.len()? {
+            references.push(SettledNameReference {
+                variable: BString::from(r.bytes()?),
+                node: NodeId::from_index(r.id(counts.nodes)?),
+                view: match r.u8()? {
+                    0 => SettledView::Whole,
+                    1 => SettledView::Directory,
+                    2 => SettledView::Filename,
+                    _ => return None,
+                },
+            });
+        }
+        arenas.settled_names.insert(
+            edge,
+            SettledNames {
+                directory,
+                references,
+            },
+        );
+    }
+    arenas.phony_rule = r.option(|r| r.id(counts.rules).map(RuleId::from_index))?;
+    arenas.console_pool = r.option(|r| r.id(counts.pools).map(PoolId::from_index))?;
+    Some(())
+}
+
+#[cfg(test)]
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+#[cfg(test)]
+impl<'a> Reader<'a> {
+    fn take(&mut self, count: usize) -> Option<&'a [u8]> {
+        let taken = self.bytes.get(self.at..self.at.checked_add(count)?)?;
+        self.at += count;
+        Some(taken)
+    }
+
+    fn u8(&mut self) -> Option<u8> {
+        self.take(1).map(|byte| byte[0])
+    }
+
+    fn bool(&mut self) -> Option<bool> {
+        match self.u8()? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        self.take(4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+    }
+
+    fn len(&mut self) -> Option<usize> {
+        let value = u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes"));
+        usize::try_from(value).ok()
+    }
+
+    /// An arena index the file claims, refused past the arena's end.
+    fn id(&mut self, count: usize) -> Option<usize> {
+        let id = self.len()?;
+        (id < count).then_some(id)
+    }
+
+    fn bytes(&mut self) -> Option<&'a [u8]> {
+        let len = self.len()?;
+        self.take(len)
+    }
+
+    fn span(&mut self, counts: Counts) -> Option<PathSpan> {
+        let (offset, len) = (self.u32()?, self.u32()?);
+        let end = (offset as usize).checked_add(len as usize)?;
+        (end <= counts.paths).then_some(PathSpan { offset, len })
+    }
+
+    #[expect(
+        clippy::option_option,
+        reason = "the outer `None` is a refused file; the inner is the file's own absent value"
+    )]
+    fn option<T>(&mut self, get: impl FnOnce(&mut Self) -> Option<T>) -> Option<Option<T>> {
+        match self.u8()? {
+            0 => Some(None),
+            1 => get(self).map(Some),
+            _ => None,
+        }
+    }
+
+    fn ids(&mut self, count: usize) -> Option<Vec<usize>> {
+        let len = self.len()?;
+        // A length no file this small could hold is refused before anything
+        // is reserved for it.
+        if len > self.bytes.len() {
+            return None;
+        }
+        (0..len).map(|_| self.id(count)).collect()
+    }
+
+    fn nodes(&mut self, counts: Counts) -> Option<IdVec<NodeId>> {
+        Some(
+            self.ids(counts.nodes)?
+                .into_iter()
+                .map(NodeId::from_index)
+                .collect(),
+        )
+    }
+
+    fn bindings<V>(
+        &mut self,
+        counts: Counts,
+        mut get: impl FnMut(&mut Self) -> Option<V>,
+    ) -> Option<Bindings<V>> {
+        let mut bindings = Bindings::default();
+        for _ in 0..self.len()? {
+            let name = VarId::from_index(self.id(counts.names)?);
+            bindings.insert(name, get(self)?);
+        }
+        Some(bindings)
+    }
+
+    fn template(&mut self, counts: Counts) -> Option<EvalString> {
+        let mut parts = Vec::new();
+        for _ in 0..self.len()? {
+            parts.push(match self.u8()? {
+                0 => EvalPart::Literal(BString::from(self.bytes()?)),
+                1 => EvalPart::Variable(VarId::from_index(self.id(counts.names)?)),
+                _ => return None,
+            });
+        }
+        Some(EvalString { parts })
+    }
+
+    fn freshness(&mut self, counts: Counts) -> Option<DeferredFreshness> {
+        let outputs = self.nodes(counts)?;
+        let flags = self.u8()?;
+        let always_new_inputs = self.nodes(counts)?;
+        let excluded_new_inputs = self.nodes(counts)?;
+        let mut new_input_names = Vec::new();
+        for _ in 0..self.len()? {
+            let node = NodeId::from_index(self.id(counts.nodes)?);
+            new_input_names.push((node, BString::from(self.bytes()?)));
+        }
+        Some(DeferredFreshness {
+            outputs,
+            always_dirty_output: flags & 1 != 0,
+            dates_do_not_decide: flags & 2 != 0,
+            heads_the_group: flags & 4 != 0,
+            always_new_inputs,
+            excluded_new_inputs,
+            new_input_names,
+            new_inputs_variable: BString::from(self.bytes()?),
+            new_inputs_directories_variable: BString::from(self.bytes()?),
+            new_inputs_filenames_variable: BString::from(self.bytes()?),
+            new_inputs_directory: BString::from(self.bytes()?),
+            activations: self.nodes(counts)?,
+        })
+    }
+}
+
+/// Every field of a graph as text, for a test to compare two graphs by.
+///
+/// Side tables are listed in key order, because the maps holding them do not
+/// promise an iteration order and a graph read back was filled in a different
+/// order from the one that was written.
+#[cfg(test)]
+pub(crate) fn describe(graph: &BuildGraph) -> String {
+    use std::fmt::Write as _;
+    let (arenas, state, defaults) = (graph.arenas(), &graph.state, &graph.defaults);
+    let mut text = String::new();
+    for index in 0..arenas.names.len() {
+        let _ = writeln!(
+            text,
+            "name {:?}",
+            arenas.names.name(VarId::from_index(index))
+        );
+    }
+    for (index, node) in arenas.nodes.iter().enumerate() {
+        let id = NodeId::from_index(index);
+        let indexed = super::nodeget(arenas, arenas.node_path(id)) == Some(id);
+        let path = arenas.node_path(id);
+        let _ = writeln!(text, "node {index} {path:?} {node:?} indexed={indexed}");
+    }
+    for (index, edge) in arenas.edges.iter().enumerate() {
+        let _ = writeln!(text, "edge {index} {edge:?}");
+    }
+    for (index, environment) in arenas.environments.iter().enumerate() {
+        let _ = writeln!(text, "env {index} {environment:?}");
+    }
+    for (index, rule) in arenas.rules.iter().enumerate() {
+        let _ = writeln!(text, "rule {index} {rule:?}");
+    }
+    for (index, pool) in arenas.pools.iter().enumerate() {
+        let _ = writeln!(text, "pool {index} {pool:?}");
+    }
+    describe_side_tables(&mut text, arenas);
+    let _ = writeln!(
+        text,
+        "phony={:?} console={:?} root={:?} pools={:?} defaults={defaults:?}",
+        arenas.phony_rule,
+        arenas.console_pool,
+        state.root,
+        state.pools(),
+    );
+    text
+}
+
+#[cfg(test)]
+fn describe_side_tables(text: &mut String, arenas: &Graph) {
+    use std::fmt::Write as _;
+    fn sorted<K: Copy + Ord + std::fmt::Debug, V: std::fmt::Debug>(
+        text: &mut String,
+        label: &str,
+        table: impl IntoIterator<Item = (K, V)>,
+    ) {
+        let mut entries: Vec<(K, V)> = table.into_iter().collect();
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        for (key, value) in entries {
+            let _ = writeln!(text, "{label} {key:?} {value:?}");
+        }
+    }
+    let by_key =
+        |set: &crate::htab::RapidHashSet<NodeId>| set.iter().map(|k| (*k, ())).collect::<Vec<_>>();
+    sorted(
+        text,
+        "validation",
+        arenas.validation_uses.iter().map(|(k, v)| (*k, v)),
+    );
+    let _ = writeln!(text, "dyndep {:?}", arenas.dyndep_edges);
+    sorted(
+        text,
+        "deferred",
+        arenas.deferred_freshness.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(
+        text,
+        "join",
+        arenas.completion_joins.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(
+        text,
+        "withdrawal",
+        arenas.withdrawal.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(text, "unmade", by_key(&arenas.unmade_makefiles));
+    sorted(text, "questioned", by_key(&arenas.questioned_makefiles));
+    sorted(text, "unread", by_key(&arenas.unread_makefiles));
+    sorted(text, "invented", by_key(&arenas.invented_outputs));
+    sorted(
+        text,
+        "forgiven",
+        arenas.forgiven_order.iter().map(|k| (*k, ())),
+    );
+    sorted(
+        text,
+        "peers",
+        arenas.peer_outputs.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(text, "disposable", by_key(&arenas.disposable_outputs));
+    sorted(
+        text,
+        "searched",
+        arenas.searched_at.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(
+        text,
+        "written",
+        arenas.written_as.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(
+        text,
+        "double-colon",
+        arenas.double_colon_targets.iter().map(|(k, v)| (*k, v)),
+    );
+    sorted(
+        text,
+        "settled",
+        arenas.settled_names.iter().map(|(k, v)| (*k, v)),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +883,59 @@ default all
         let graph = graph_of(MANIFEST);
         let other = graph_of(&MANIFEST.replace("default all", "default prog"));
         assert_ne!(written(&graph), written(&other));
+    }
+
+    #[test]
+    fn a_graph_read_back_is_the_graph_written() {
+        let graph = graph_of(MANIFEST);
+        let read_back = read(&written(&graph)).expect("the bytes hold a graph");
+        assert_eq!(describe(&read_back), describe(&graph));
+    }
+
+    #[test]
+    fn every_truncation_is_refused() {
+        let bytes = written(&graph_of(MANIFEST));
+        for end in 0..bytes.len() {
+            assert!(
+                read(&bytes[..end]).is_none(),
+                "a file cut at byte {end} of {} read as a graph",
+                bytes.len()
+            );
+        }
+        let mut longer = bytes;
+        longer.push(0);
+        assert!(read(&longer).is_none(), "trailing bytes are not a graph");
+    }
+
+    #[test]
+    fn another_version_is_not_opened() {
+        let mut bytes = written(&graph_of(MANIFEST));
+        bytes[MAGIC.len()] ^= 1;
+        assert!(read(&bytes).is_none());
+    }
+
+    #[test]
+    fn an_identifier_past_its_arena_is_refused() {
+        let mut bytes = written(&graph_of(MANIFEST));
+        // The edge count sits fourth among the header's seven counts. With it
+        // zero, the first node that names an edge names one past the arena.
+        let edges_at = MAGIC.len() + 4 + 3 * 8;
+        bytes[edges_at..edges_at + 8].copy_from_slice(&0_u64.to_le_bytes());
+        assert!(read(&bytes).is_none());
+    }
+
+    #[test]
+    fn an_isolated_node_stays_out_of_the_index() {
+        let mut graph = graph_of(MANIFEST);
+        let indexed =
+            super::super::nodeget(graph.arenas(), crate::util::BStr::new(b"a.c")).expect("a.c");
+        let isolated = super::super::allocate_node(graph.arenas_mut(), b"a.c");
+        assert_ne!(indexed, isolated);
+        let read_back = read(&written(&graph)).expect("the bytes hold a graph");
+        assert_eq!(describe(&read_back), describe(&graph));
+        assert_eq!(
+            super::super::nodeget(read_back.arenas(), crate::util::BStr::new(b"a.c")),
+            Some(indexed)
+        );
     }
 }

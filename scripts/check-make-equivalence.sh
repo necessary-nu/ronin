@@ -24,6 +24,13 @@ cargo test --release --lib \
     make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus \
     -- --ignored --exact --test-threads=1 --nocapture
 
+# And that a graph written to the cache and read back is the graph that was
+# composed, field for field, over the same corpus. It changes the working
+# directory for the same reason and runs alone for the same reason.
+cargo test --release --lib \
+    make::equivalence::a_graph_read_back_matches_the_corpus \
+    -- --ignored --exact --test-threads=1 --nocapture
+
 # And that the graph a compilation builds does not depend on how many threads
 # read its Makefiles. Recursive children are read ahead of the composition on
 # workers, so a scheduling difference is something the graph could pick up;
