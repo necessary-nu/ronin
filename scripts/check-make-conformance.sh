@@ -4,6 +4,11 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
+# Tests write the Make front end's compiled graph under $XDG_CACHE_HOME/ronin/.
+# Keep that under target/ rather than in the operator's real cache directory.
+XDG_CACHE_HOME="$repo_root/target/xdg-cache"
+export XDG_CACHE_HOME
+
 # The gate measures the Make evaluator against GNU Make, so it runs the fork's
 # own binary: what a Makefile evaluates to is decided before any front end
 # builds it, and rkati is that evaluation with nothing else on top.

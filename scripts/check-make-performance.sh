@@ -23,6 +23,11 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
+# Tests write the Make front end's compiled graph under $XDG_CACHE_HOME/ronin/.
+# Keep that under target/ rather than in the operator's real cache directory.
+XDG_CACHE_HOME="$repo_root/target/xdg-cache"
+export XDG_CACHE_HOME
+
 gnu_make=${MAKE_ORACLE:-"$repo_root/reference/make-oracle/make-4.4.1/make"}
 if [ ! -x "$gnu_make" ]; then
     echo "check-make-performance: no GNU Make oracle at $gnu_make." >&2

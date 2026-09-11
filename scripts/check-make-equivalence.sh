@@ -13,6 +13,11 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
+# Tests write the Make front end's compiled graph under $XDG_CACHE_HOME/ronin/.
+# Keep that under target/ rather than in the operator's real cache directory.
+XDG_CACHE_HOME="$repo_root/target/xdg-cache"
+export XDG_CACHE_HOME
+
 corpus_size=$(find kati/testcase -name '*.mk' 2>/dev/null | wc -l)
 if [ "$corpus_size" -eq 0 ]; then
     echo "make-equivalence: kati/testcase holds no makefiles; the submodule is not checked out." >&2

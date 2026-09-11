@@ -53,6 +53,16 @@ for tool in sandbox systemd-run timeout; do
     }
 done
 
+# The Make front end writes its compiled graph under $XDG_CACHE_HOME/ronin/,
+# and a suite runs hundreds of small makefiles through it. Left alone that is
+# hundreds of entries in the operator's real cache directory per run, which is
+# how ~/.cache/ronin came to hold 303 test-sized directories. A contained run
+# gets a cache of its own under target/, so what the tests write stays with
+# the tests.
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+XDG_CACHE_HOME="$repo_root/target/xdg-cache"
+export XDG_CACHE_HOME
+
 exec systemd-run --user --scope --quiet --collect \
     -p "TasksMax=$tasks_max" \
     -p "MemoryMax=$memory_max" \
