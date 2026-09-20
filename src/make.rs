@@ -34,6 +34,7 @@ mod recipe;
 pub(crate) mod record;
 mod report;
 mod sink;
+pub(crate) mod warm;
 
 #[cfg(test)]
 mod equivalence;

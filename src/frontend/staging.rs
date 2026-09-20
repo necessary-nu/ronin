@@ -14,7 +14,61 @@
 
 use super::{BuildGraph, Edge, Node, PrebuiltMarks, Rule};
 
+impl Node {
+    /// Where this node sits in the graph's own arena.
+    ///
+    /// The one name every node has. A path does not serve: a recursive front
+    /// end gives two units' identically spelt targets nodes of their own
+    /// ([`BuildGraph::isolated_node`]), and such a node answers to no lookup
+    /// at all. A record written beside one graph and refused unless the two
+    /// still match can name a node by where it is.
+    pub(crate) const fn at(self) -> usize {
+        self.0.index()
+    }
+}
+
+impl Edge {
+    /// Where this edge sits in the graph's own arena. See [`Node::at`].
+    pub(crate) const fn at(self) -> usize {
+        self.0.index()
+    }
+}
+
 impl BuildGraph {
+    /// The node a record names, or `None` for a record naming a node this
+    /// graph does not have.
+    ///
+    /// Bounds-checked rather than trusted: the record and the graph are one
+    /// pair and are refused unless they still match, and a caller that reads
+    /// a number out of a file gets a refusal rather than a panic.
+    pub(crate) fn node_at(&self, at: usize) -> Option<Node> {
+        self.arenas.node_at(at).map(Node)
+    }
+
+    /// The edge a record names. See [`Self::node_at`].
+    pub(crate) fn edge_at(&self, at: usize) -> Option<Edge> {
+        self.arenas.edge_at(at).map(Edge)
+    }
+
+    /// An edge's primary output, which is the name a record holds it under.
+    pub(crate) fn output_of(&self, edge: Edge) -> Option<Node> {
+        self.arenas.edge(edge.id()).out.first().copied().map(Node)
+    }
+
+    /// The first output of every edge this graph carries a prebuilt mark for.
+    ///
+    /// What a run that LOADED the graph has to build before the marks are
+    /// true again. Taken off the marks rather than from a list of names,
+    /// because the marks are the composition's own record of what it believed
+    /// was already done and cover the whole closure of it, while a name is
+    /// something a graph may hold twice or not index at all.
+    pub(crate) fn prebuilt_outputs(&self) -> Vec<Node> {
+        self.arenas
+            .prebuilt_edges()
+            .map(|edge| Node(self.arenas.edge(edge).out[0]))
+            .collect()
+    }
+
     /// Take off every prebuilt mark a graph read from a file was written with.
     ///
     /// The mark says the work behind an edge was done by THIS invocation, and

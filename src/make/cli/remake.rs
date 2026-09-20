@@ -592,6 +592,11 @@ fn remaking_options(options: &BuildOptions) -> BuildOptions {
 }
 
 /// Where the graph says each of these targets lives.
+/// Where each of these nodes sits in the graph it belongs to.
+fn places_of(targets: &[Node]) -> Vec<usize> {
+    targets.iter().map(|target| target.at()).collect()
+}
+
 fn paths_of(graph: &BuildGraph, targets: &[Node]) -> Vec<Vec<u8>> {
     targets
         .iter()
@@ -937,7 +942,6 @@ pub(super) fn build_compiler_inputs(
         goals,
         restarts,
     } = request;
-    let keep_going = invocation.given(Switch::KeepGoing);
     // What this pass read, which a later pass over the same text repeats rather
     // than performs, and what the ground told it. The FIRST read's answers are
     // the ones kept: a pass that replayed them recorded the same ones again, and
@@ -946,12 +950,217 @@ pub(super) fn build_compiler_inputs(
     let mut loaded = loaded;
     absorb_reads(&mut loaded, settled);
     let snapshot = snapshot_if_settling(&loaded);
-    let (mut graph, mut read) = gather_for_cache(loaded, settled);
-    let mut recipes = read.recipes.take();
-    // Make keeps no state beside the build, so there is nothing to open and
-    // nothing an opening could complain about.
-    let mut persistence = Persistence::none();
+    let (graph, mut read) = gather_for_cache(loaded, settled);
+    let recipes = read.recipes.take();
 
+    update_and_stage(
+        Staging {
+            graph,
+            read,
+            recipes,
+            // Make keeps no state beside the build, so there is nothing to
+            // open and nothing an opening could complain about.
+            persistence: Persistence::none(),
+            snapshot,
+            invocation,
+            options,
+            directory,
+            goals,
+            restarts,
+            complete: false,
+            settled,
+        },
+        reported,
+        output,
+        diagnostics,
+    )
+}
+
+/// A composition read back from the cache, and everything the update and the
+/// staged work need that the graph does not carry.
+pub(super) struct LoadedComposition<'a> {
+    pub(super) graph: BuildGraph,
+    pub(super) build: &'a crate::make::cache::artifact::BuildArtifact,
+    pub(super) recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
+    pub(super) invocation: &'a Invocation,
+    pub(super) options: BuildOptions,
+    pub(super) directory: &'a Path,
+    pub(super) goals: &'a [BString],
+}
+
+/// Bring a loaded composition's Makefiles up to date and build what it staged,
+/// exactly as the run that composed it would have.
+///
+/// The prebuilt marks come off first and go back on last. A mark says the work
+/// behind an edge was done by THIS invocation; on the way in that is false, so
+/// every edge is reached and decided about against the disk, and on the way out
+/// it is true, because the staged work between the two has run. Leaving them
+/// off would send the goal build back over work the staging has just settled,
+/// which is not what the run that wrote the graph does.
+///
+/// `None` where the graph does not hold something the record names, which is a
+/// record and a graph that do not describe one composition.
+pub(super) fn build_loaded_composition(
+    loaded: LoadedComposition<'_>,
+    reported: &mut String,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
+) -> Option<Result<Settlement, Error>> {
+    let LoadedComposition {
+        mut graph,
+        build,
+        recipes,
+        invocation,
+        options,
+        directory,
+        goals,
+    } = loaded;
+    let read = read_from_record(&mut graph, build)?;
+    let marks = graph.unmark_prebuilt();
+    let mut settled = crate::make::Groundwork::default();
+    let staged = update_and_stage(
+        Staging {
+            graph,
+            read,
+            recipes,
+            persistence: Persistence::none(),
+            // The graph is already on disk: this run loaded it, and writing
+            // back what it did not compose would replace a record of a read
+            // with a record of no read at all.
+            snapshot: None,
+            invocation,
+            options,
+            directory,
+            goals,
+            // A loaded composition has restarted nothing: it is the read the
+            // last run settled on, which is the read a restart ends at.
+            restarts: 0,
+            complete: true,
+            settled: &mut settled,
+        },
+        reported,
+        output,
+        diagnostics,
+    );
+    Some(match staged {
+        Ok(Settlement::Settled(mut settled_graph)) => {
+            settled_graph.graph.remark_prebuilt(marks);
+            Ok(Settlement::Settled(settled_graph))
+        }
+        other => other,
+    })
+}
+
+/// The node lists a loaded composition's update works from, resolved against
+/// the graph beside the record.
+///
+/// `None` where a name the record holds is not in the graph, which is a pair
+/// that does not describe one composition and is refused rather than partly
+/// used.
+fn read_from_record(
+    graph: &mut BuildGraph,
+    build: &crate::make::cache::artifact::BuildArtifact,
+) -> Option<Read> {
+    let nodes = |places: &[usize]| -> Option<Vec<Node>> {
+        places.iter().map(|at| graph.node_at(*at)).collect()
+    };
+    let remakes = nodes(&build.remakes)?;
+    let forgiven = nodes(&build.forgiven)?;
+    let unread = nodes(&build.unread)?;
+    // What gets BUILT is every edge the graph carries a prebuilt mark for:
+    // the mark is the composition's own word that this work was done, and a
+    // run that loaded the graph has to do it before the mark is true again.
+    // The two recorded lists say only which phase a piece belongs to, and a
+    // name they hold that this graph does not index — a target two units both
+    // spell the same way has a node of its own and answers to no lookup —
+    // falls into the goal phase, which is the phase that pretends nothing.
+    let for_makefiles: crate::htab::RapidHashSet<Vec<u8>> =
+        build.staged_for_makefiles.iter().cloned().collect();
+    let mut staged = Vec::new();
+    let mut makefile_staged = Vec::new();
+    for node in graph.prebuilt_outputs() {
+        if for_makefiles.contains(graph.path(node)) {
+            makefile_staged.push(node);
+        } else {
+            staged.push(node);
+        }
+    }
+    let complaints = build
+        .complaints
+        .iter()
+        .map(|(at, complaint)| Some((graph.node_at(*at)?, complaint.clone())))
+        .collect::<Option<Vec<_>>>()?;
+    graph.mark_makefiles_unread(&unread);
+    Some(Read {
+        // A loaded composition performed no read, so it refused nothing and
+        // left nothing half-composed: a run that could not rebuild every unit
+        // the record names never reaches here.
+        refusals: Vec::new(),
+        remakes,
+        forgiven,
+        complaints,
+        staged,
+        makefile_staged,
+        boundaries: crate::htab::RapidHashSet::default(),
+        unfinished: Vec::new(),
+        recipes: None,
+    })
+}
+
+/// Everything bringing one composition's Makefiles up to date and building
+/// what it staged needs, whether that composition was read or loaded.
+struct Staging<'a> {
+    graph: BuildGraph,
+    read: Read,
+    recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
+    persistence: Persistence,
+    /// The graph as the cache will keep it, for a read that can settle;
+    /// nothing for a loaded composition, which is already on disk.
+    snapshot: Option<Vec<u8>>,
+    invocation: &'a Invocation,
+    options: BuildOptions,
+    directory: &'a Path,
+    goals: &'a [BString],
+    restarts: usize,
+    /// Whether this composition has every unit in it already, which is what a
+    /// LOADED one has and a read has only when it settles.
+    ///
+    /// A read goes around after staged work because the work may have made a
+    /// unit composable that was not: the pass that follows is what composes
+    /// it. Nothing is left to compose here, so the staged work having run is
+    /// no reason to read again — only a Makefile that moved under it is.
+    complete: bool,
+    settled: &'a mut crate::make::Groundwork,
+}
+
+/// Bring the Makefiles a composition consulted up to date, then build what it
+/// staged, and say what that leaves the invocation to do.
+///
+/// GNU Make's makefile update followed by the work a `$(MAKE)` boundary waits
+/// for. A run that loaded its composition reaches this with the same values a
+/// run that read it reaches it with, because every decision made from here is
+/// a decision about the disk as it stands and none of them can be carried.
+fn update_and_stage(
+    staging: Staging<'_>,
+    reported: &mut String,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
+) -> Result<Settlement, Error> {
+    let Staging {
+        mut graph,
+        read,
+        mut recipes,
+        mut persistence,
+        snapshot,
+        invocation,
+        options,
+        directory,
+        goals,
+        restarts,
+        complete,
+        settled,
+    } = staging;
+    let keep_going = invocation.given(Switch::KeepGoing);
     let Read {
         refusals,
         remakes,
@@ -1009,6 +1218,7 @@ pub(super) fn build_compiler_inputs(
             },
             boundaries,
             settled,
+            complete,
             complaints: &complaints,
             invocation,
             options: &options,
@@ -1059,14 +1269,13 @@ fn gather_for_cache(
     let (makeflags, job_budget) = loaded.settled_invocation();
     let makeflags = makeflags.to_owned();
     let clean_wrappers = std::mem::take(&mut loaded.clean_wrappers);
-    let unread_paths = paths_of(&loaded.graph, loaded.unread_remake_targets());
+    let unread = places_of(loaded.unread_remake_targets());
     let (graph, read) = Read::taken_from(loaded);
     stage_paths(settled, &graph, &read.makefile_staged, &read.staged);
     if settling {
         settled.build = Some(build_artifact(
-            &graph,
             &read,
-            unread_paths,
+            unread,
             clean_wrappers,
             (makeflags, job_budget),
             settled,
@@ -1099,33 +1308,28 @@ fn absorb_reads(loaded: &mut crate::make::Loaded, settled: &mut crate::make::Gro
 /// What the build over the settled graph needs beside the graph, as the pass
 /// that settled has it in hand.
 fn build_artifact(
-    graph: &BuildGraph,
     read: &Read,
-    unread: Vec<Vec<u8>>,
+    unread: Vec<usize>,
     clean_wrappers: Vec<(crate::frontend::Edge, Vec<Node>)>,
     (makeflags, job_budget): (String, usize),
     settled: &crate::make::Groundwork,
 ) -> crate::make::cache::artifact::BuildArtifact {
     use crate::make::cache::artifact::{BuildArtifact, RecipeUnitArtifact};
-    let output_of = |edge: crate::graph::EdgeId| {
-        let arenas = graph.arenas();
-        arenas.node_path(arenas.edge(edge).out[0]).to_vec()
-    };
     let recorded = read.recipes.as_deref().map(|recipes| recipes.recorded());
     BuildArtifact {
-        remakes: paths_of(graph, &read.remakes),
-        forgiven: paths_of(graph, &read.forgiven),
+        remakes: places_of(&read.remakes),
+        forgiven: places_of(&read.forgiven),
         unread,
         complaints: read
             .complaints
             .iter()
-            .map(|(node, complaint)| (graph.path(*node).to_vec(), complaint.clone()))
+            .map(|(node, complaint)| (node.at(), complaint.clone()))
             .collect(),
         staged_for_makefiles: settled.staged_for_makefiles.clone(),
         staged_for_goals: settled.staged_for_goals.clone(),
         clean_wrappers: clean_wrappers
             .into_iter()
-            .map(|(wrapper, staged)| (output_of(wrapper.id()), paths_of(graph, &staged)))
+            .map(|(wrapper, staged)| (wrapper.at(), places_of(&staged)))
             .collect(),
         units: recorded
             .as_ref()
@@ -1147,7 +1351,7 @@ fn build_artifact(
                 recorded
                     .deferred
                     .iter()
-                    .map(|(edge, unit, recipe)| (output_of(*edge), unit.to_vec(), *recipe))
+                    .map(|(edge, unit, recipe)| (edge.index(), unit.to_vec(), *recipe))
                     .collect()
             })
             .unwrap_or_default(),
@@ -1157,7 +1361,7 @@ fn build_artifact(
                 recorded
                     .settled
                     .iter()
-                    .map(|(edge, steps)| (output_of(*edge), (*steps).clone()))
+                    .map(|(edge, steps)| (edge.index(), (*steps).clone()))
                     .collect()
             })
             .unwrap_or_default(),
@@ -1190,6 +1394,8 @@ struct StagedWork<'a> {
     boundaries: crate::htab::RapidHashSet<EvaluationBoundary>,
     /// What the passes before this one settled, which this one adds to.
     settled: &'a mut crate::make::Groundwork,
+    /// See [`Staging::complete`].
+    complete: bool,
     complaints: &'a [(Node, String)],
     invocation: &'a Invocation,
     options: &'a BuildOptions,
@@ -1220,6 +1426,7 @@ fn build_staged_work(
         staged,
         boundaries,
         settled,
+        complete,
         complaints,
         invocation,
         options,
@@ -1258,6 +1465,7 @@ fn build_staged_work(
             snapshot,
         },
         StagedBoundary {
+            complete,
             boundaries,
             settled,
             remade,
@@ -1318,6 +1526,8 @@ struct Staged<'a> {
 
 /// What one settled compilation boundary leaves the read to carry forward.
 struct StagedBoundary<'a> {
+    /// See [`Staging::complete`].
+    complete: bool,
     /// The boundaries this pass reached, which the next one is past.
     boundaries: crate::htab::RapidHashSet<EvaluationBoundary>,
     /// What the passes before this one laid down, which this one adds to.
@@ -1357,6 +1567,7 @@ fn after_staging(
         snapshot,
     } = compiled;
     let StagedBoundary {
+        complete,
         boundaries,
         settled,
         remade,
@@ -1375,6 +1586,14 @@ fn after_staging(
                 keep_going,
                 crate::signal::interrupted().is_some(),
             )))
+        }
+        Pass::Ran(_) | Pass::Current if complete && boundaries.is_empty() && !remade => {
+            Ok(Settlement::Settled(Box::new(SettledGraph {
+                graph,
+                persistence,
+                recipes,
+                snapshot,
+            })))
         }
         Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled(Box::new(SettledGraph {
             graph,
@@ -1408,6 +1627,34 @@ mod tests {
     use crate::make::cli::interface_tests::parsed;
     use crate::util::BString;
     use std::path::Path;
+
+    /// A record of a composition with nothing in it but the places it names.
+    fn recorded(remakes: Vec<usize>) -> crate::make::cache::artifact::BuildArtifact {
+        crate::make::cache::artifact::BuildArtifact {
+            remakes,
+            forgiven: Vec::new(),
+            unread: Vec::new(),
+            complaints: Vec::new(),
+            staged_for_makefiles: Vec::new(),
+            staged_for_goals: Vec::new(),
+            clean_wrappers: Vec::new(),
+            units: Vec::new(),
+            deferred: Vec::new(),
+            settled: Vec::new(),
+            makeflags: String::new(),
+            job_budget: 1,
+        }
+    }
+
+    /// A record and a graph are one pair, so a place the graph does not have
+    /// is a pair that describes no one composition.
+    #[test]
+    fn a_record_naming_no_node_is_refused() {
+        let mut graph = BuildGraph::new();
+        let node = graph.node(b"a.o").expect("a node");
+        assert!(super::read_from_record(&mut graph, &recorded(vec![node.at()])).is_some());
+        assert!(super::read_from_record(&mut graph, &recorded(vec![usize::MAX])).is_none());
+    }
 
     fn nodes(graph: &mut BuildGraph, paths: &[&str]) -> Vec<Node> {
         paths

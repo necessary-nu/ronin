@@ -974,6 +974,34 @@ default all
         );
     }
 
+    /// A record holds an edge under its primary output's name, so the two
+    /// have to agree about which that is.
+    #[test]
+    fn an_edge_is_held_under_its_first_output() {
+        let graph = graph_of(MANIFEST);
+        let prog = graph.lookup(b"prog").expect("prog");
+        let edge = graph.generator(prog).expect("prog is built");
+        assert_eq!(graph.output_of(edge), Some(prog));
+    }
+
+    /// What a run that loaded the graph has to build before the marks say
+    /// anything true again.
+    #[test]
+    fn the_marks_name_the_work_they_stand_for() {
+        let mut graph = graph_of(MANIFEST);
+        assert!(graph.prebuilt_outputs().is_empty());
+        let phony = graph.rule(graph.root(), b"phony").expect("the phony rule");
+        let prog = graph.lookup(b"prog").expect("prog");
+        graph.mark_subgraphs_prebuilt(&[prog], phony);
+        let mut outputs: Vec<String> = graph
+            .prebuilt_outputs()
+            .iter()
+            .map(|node| String::from_utf8_lossy(graph.path(*node)).into_owned())
+            .collect();
+        outputs.sort();
+        assert_eq!(outputs, ["a.o", "b.o", "prog"]);
+    }
+
     #[test]
     fn a_twice_marked_edge_wears_its_first_rule() {
         let mut graph = graph_of(MANIFEST);

@@ -43,8 +43,9 @@ mod option_values;
 mod pass;
 mod remake;
 mod selection;
-mod subninja;
+pub(in crate::make) mod subninja;
 mod switch_table;
+pub(in crate::make) mod warm;
 use diagnostics::{emit_raised, led_by_raised};
 use interface::{
     ArgumentSource, carry_command_line_evals, compiler_flag_variables, decode_makefile_makeflags,
@@ -473,6 +474,7 @@ impl Invocation {
     pub(crate) fn goals(&self) -> &[BString] {
         &self.goals
     }
+
     const fn new() -> Self {
         Self {
             directories: Vec::new(),
@@ -1736,6 +1738,19 @@ fn prepare_graph(
     // a Make in one pass is the same bytes in the next. See
     // [`kati::scripts::Scripts`].
     let scripts = Arc::<kati::scripts::Scripts>::default();
+    // The composition the last run left, when this tree is the tree it read.
+    // A run that cannot use it has raised whatever its attempt raised, and
+    // the read that follows raises the same things again — so what the
+    // attempt left is dropped rather than said twice.
+    match warm::warm_start(root, &scripts, reported, output, diagnostics)? {
+        Some(prepared) => {
+            emit_raised(root.diagnostics, diagnostics, held)?;
+            return Ok(prepared);
+        }
+        None => {
+            let _ = root.diagnostics.take();
+        }
+    }
     while fruitless < MANIFEST_RETRY_LIMIT {
         let settled_before = settled.boundaries.len();
         // Each pass reads the whole compilation again, so what an earlier one
@@ -2199,7 +2214,7 @@ fn compilation_key(directory: &Path, makefiles: &[PathBuf], makeflags: &str) -> 
 /// Written as a placeholder rather than removed, so a run that publishes an
 /// address and one that does not still key apart — whether there is a
 /// jobserver at all is something the read can see.
-fn settle_job_budget_address(key: &mut Vec<u8>) {
+pub(in crate::make) fn settle_job_budget_address(key: &mut Vec<u8>) {
     const ADDRESS: &[u8] = b"--jobserver-auth=";
     const PLACEHOLDER: &[u8] = b"<address>";
     let mut settled = Vec::with_capacity(key.len());

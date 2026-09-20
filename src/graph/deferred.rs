@@ -83,6 +83,20 @@ pub(crate) struct DeferredFreshness {
 }
 
 impl Graph {
+    /// The node at `at`, or nothing where the arena is shorter than that.
+    ///
+    /// The bound is checked here because the callers are readers of a file:
+    /// a number out of a record is a claim about this graph, and a claim that
+    /// does not fit is a record refused rather than a panic.
+    pub(crate) fn node_at(&self, at: usize) -> Option<NodeId> {
+        (at < self.nodes.len()).then(|| NodeId::from_index(at))
+    }
+
+    /// The edge at `at`. See [`Self::node_at`].
+    pub(crate) fn edge_at(&self, at: usize) -> Option<EdgeId> {
+        (at < self.edges.len()).then(|| EdgeId::from_index(at))
+    }
+
     /// Give `edge` the phony rule for work already done, remembering the rule
     /// it wore. An edge already phony is remembered under nothing, so putting
     /// the rules back leaves it phony.
@@ -92,6 +106,15 @@ impl Graph {
             self.prebuilt.push((edge, previous));
             self.edge_mut(edge).rule = Some(phony);
         }
+    }
+
+    /// Every edge a mark replaced the rule of, each once and in the order
+    /// they were replaced.
+    pub(crate) fn prebuilt_edges(&self) -> impl Iterator<Item = EdgeId> + use<'_> {
+        let mut seen = crate::htab::RapidHashSet::default();
+        self.prebuilt
+            .iter()
+            .filter_map(move |(edge, _)| seen.insert(*edge).then_some(*edge))
     }
 
     /// Put back the rule every prebuilt mark replaced, and forget the marks.

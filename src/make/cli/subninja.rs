@@ -123,6 +123,90 @@ pub(in crate::make) fn compile(
     })
 }
 
+/// Build the same child compilation again from what was recorded about it,
+/// without the parent read that named it.
+///
+/// [`compile`] reduces a recipe line to words through the shell and its
+/// command substitutions, and then builds a session from the words and the
+/// directory those produced. A run that loads a composed graph has the words
+/// and the directory in the record and none of the reads that produced them,
+/// so it starts where they are already settled. Everything downstream of that
+/// point is the same code reached the same way, which is what makes the
+/// session the session the recorded read had.
+///
+/// `shared` is the ROOT's context, for the things every unit of one
+/// invocation shares — the diagnostics, the interrupt watch, the census, the
+/// shell readings, the ground count, the build root and the job counts. What
+/// a real parent would have contributed is in the origin instead.
+///
+/// The `-C` directories are not applied again: the recorded directory already
+/// has them, because it is the directory the recorded read reached.
+pub(in crate::make) fn recompose(
+    origin: &crate::make::ChildOrigin,
+    cache_key: Vec<u8>,
+    shared: &CompilationContext,
+) -> Result<Compilation, MakeError> {
+    let inherited =
+        (!origin.parent_makeflags.is_empty()).then_some(origin.parent_makeflags.as_str());
+    let invocation = match parse(
+        &origin.words,
+        inherited,
+        origin.gnumakeflags.as_deref(),
+        &shared.diagnostics,
+    )
+    .map_err(|error| MakeError::Evaluate(error.to_string()))?
+    {
+        Action::Execute(invocation) => *invocation,
+        Action::Immediate(_) => {
+            return Err(MakeError::Evaluate(
+                "a recorded recursive Make invocation no longer describes a graph".to_owned(),
+            ));
+        }
+    };
+    let directory = origin.directory.clone();
+    let makefiles = named_makefiles(&invocation, &directory);
+    if makefiles.is_empty() {
+        return Err(MakeError::MissingChildMakefile { directory });
+    }
+    let invoked_as = path_of(origin.words[0].as_bytes())
+        .map_err(|error| MakeError::Evaluate(error.to_string()))?;
+    let mut session = session_for(
+        &invocation,
+        &makefiles,
+        shared.jobs,
+        &invoked_as,
+        &shared.diagnostics,
+        &shared.census,
+        &shared.scripts,
+    );
+    session.invocation_environment = Some(std::sync::Arc::clone(&origin.environment));
+    record_invocation_variables(&mut session, &invocation, origin.level, 0);
+    carry_command_line_evals(&mut session, &invocation.evals);
+    let path_prefix = directory
+        .strip_prefix(&shared.root_directory)
+        .map_or_else(|_| directory.clone(), Path::to_owned);
+    session.unit_prefix = path_prefix.as_os_str().as_encoded_bytes().to_vec();
+    let environment = session
+        .invocation_environment
+        .clone()
+        .expect("a recomposed child keeps the environment it was recorded with");
+    Ok(Compilation {
+        session,
+        shuffle: invocation.shuffle,
+        context: child_context(
+            shared,
+            directory,
+            path_prefix,
+            propagated_makeflags(&invocation),
+            origin.level,
+            environment,
+            origin.recipe_environment.clone(),
+            origin.clone(),
+        ),
+        cache_key,
+    })
+}
+
 /// The context a composed child compiles under: its parent's, with the fields
 /// a child settles for itself replaced.
 #[expect(

@@ -24,6 +24,20 @@ pub(crate) struct Cached {
     pub(crate) graph: BuildGraph,
 }
 
+/// What this invocation left last time, if it left anything this build can
+/// read.
+///
+/// The directory's name is the invocation's own — the build directory, the
+/// command-line variables, the goals and the format version — so a run that
+/// compiles to a different graph looks somewhere else rather than finding a
+/// graph it would have to reject.
+pub(crate) fn cached(
+    build_directory: &Path,
+    invocation: &crate::make::cli::Invocation,
+) -> Option<Cached> {
+    open(&super::directory_for(build_directory, invocation)?)
+}
+
 /// The pair in `directory`, checked against each other.
 pub(crate) fn open(directory: &Path) -> Option<Cached> {
     let record = std::fs::read(directory.join(super::RECORD)).ok()?;

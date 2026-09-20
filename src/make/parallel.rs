@@ -21,7 +21,7 @@
 //! This is the whole reason the reads may overlap. It is also why the pool is
 //! Linux-only: `CLONE_FS` is a Linux clone flag, and on a platform without it
 //! there is no per-thread working directory to have, so
-//! [`ReadPool::available`] answers false and every read stays on the calling
+//! [`threads_own_a_directory`] answers false and every read stays on the calling
 //! thread.
 //!
 //! # Why anything is freed here
@@ -177,6 +177,37 @@ impl Drop for Evaluating<'_> {
 
 /// Give this thread its own working directory, root and umask.
 ///
+/// Whether a thread on this platform can be given a working directory of its
+/// own.
+///
+/// Asked by unsharing on a thread of its own, which is the only honest
+/// answer: a sandbox may refuse the call, and a pool whose workers cannot
+/// unshare would read every unit against one directory. The thread is spawned
+/// for the question alone, so the unshare it leaves behind reaches nothing.
+#[cfg(target_os = "linux")]
+pub(super) fn threads_own_a_directory() -> bool {
+    std::thread::spawn(|| unshare_filesystem_context().is_ok())
+        .join()
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) const fn threads_own_a_directory() -> bool {
+    false
+}
+
+/// Stand this thread in a directory of its own, so a `chdir` on it moves
+/// nothing else.
+#[cfg(target_os = "linux")]
+pub(super) fn own_a_directory() -> bool {
+    unshare_filesystem_context().is_ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) const fn own_a_directory() -> bool {
+    false
+}
+
 /// `unshare` is deprecated in rustix in favour of an `unsafe` spelling, and the
 /// safety condition it carries is about `UnshareFlags::FILES` alone: unsharing
 /// the *descriptor* table lets one thread hold a descriptor another thread's
@@ -575,7 +606,7 @@ impl ReadPool {
     /// threads.
     pub(crate) fn new(threads: usize) -> Option<Self> {
         let threads = threads.min(crate::os::cores());
-        if threads < 2 || !Self::available() {
+        if threads < 2 || !threads_own_a_directory() {
             return None;
         }
         let (sender, arrivals) = mpsc::channel::<Queued>();
@@ -620,25 +651,6 @@ impl ReadPool {
     /// already performing one.
     const fn dispatcher(&self) -> Option<&Dispatcher> {
         self.dispatcher.as_ref()
-    }
-
-    /// Whether a thread on this platform can be given a working directory of
-    /// its own.
-    #[cfg(target_os = "linux")]
-    fn available() -> bool {
-        // Asked by unsharing on a thread of its own, which is the only honest
-        // answer: a sandbox may refuse the call, and a pool whose workers
-        // cannot unshare would read every unit against one directory. The
-        // thread is spawned for the question alone, so the unshare it leaves
-        // behind reaches nothing.
-        std::thread::spawn(|| unshare_filesystem_context().is_ok())
-            .join()
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn available() -> bool {
-        false
     }
 
     /// Take work until the queue closes, standing in a directory of this
@@ -822,7 +834,7 @@ fn prepare_read(
 /// entering it is what a worker does on its own behalf: kati reads relative
 /// names against the working directory, and on a worker that directory is the
 /// worker's own.
-fn evaluate_unit(
+pub(super) fn evaluate_unit(
     session: Session,
     directory: &std::path::Path,
     evaluation: kati::ninja::BuildEvaluation,

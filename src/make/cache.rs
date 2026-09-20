@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 /// Bumped whenever the bytes change meaning. A run whose cache directory was
 /// written by another version simply has no cache: the name is different, so
 /// the file is not there, and nothing has to detect a format it cannot parse.
-pub(crate) const FORMAT_VERSION: u32 = 3;
+pub(crate) const FORMAT_VERSION: u32 = 4;
 
 /// The directory this invocation's artifact belongs in.
 ///
@@ -40,10 +40,14 @@ pub(crate) const FORMAT_VERSION: u32 = 3;
 /// to know the name whether or not anything has been written yet.
 pub(crate) fn directory_for(
     build_directory: &Path,
-    variables: &[impl AsRef<[u8]>],
-    goals: &[impl AsRef<[u8]>],
+    invocation: &crate::make::cli::Invocation,
 ) -> Option<PathBuf> {
-    Some(root()?.join(name_for(build_directory, variables, goals)))
+    Some(root()?.join(name_for(
+        build_directory,
+        invocation.variables(),
+        invocation.goals(),
+        &crate::make::cli::warm::composition_key(invocation),
+    )))
 }
 
 /// `$XDG_CACHE_HOME/ronin`, or `~/.cache/ronin`.
@@ -84,6 +88,7 @@ fn name_for(
     build_directory: &Path,
     variables: &[impl AsRef<[u8]>],
     goals: &[impl AsRef<[u8]>],
+    switches: &[u8],
 ) -> String {
     let canonical = std::fs::canonicalize(build_directory)
         .unwrap_or_else(|_| build_directory.to_path_buf())
@@ -103,10 +108,11 @@ fn name_for(
     for goal in goals {
         push_field(&mut key, goal.as_ref());
     }
+    push_field(&mut key, switches);
     format!("{:016x}", rapidhashv1(key.as_slice()))
 }
 
-fn push_field(key: &mut Vec<u8>, field: &[u8]) {
+pub(crate) fn push_field(key: &mut Vec<u8>, field: &[u8]) {
     key.extend_from_slice(&(field.len() as u64).to_le_bytes());
     key.extend_from_slice(field);
 }
@@ -140,9 +146,7 @@ pub(crate) fn record(
     settled: &crate::make::Groundwork,
     graph: Option<Vec<u8>>,
 ) {
-    let Some(directory) =
-        directory_for(build_directory, invocation.variables(), invocation.goals())
-    else {
+    let Some(directory) = directory_for(build_directory, invocation) else {
         return;
     };
     write(&directory, settled, graph);
@@ -183,9 +187,21 @@ mod tests {
     use super::*;
 
     fn name(directory: &str, variables: &[&str], goals: &[&str]) -> String {
+        named(directory, variables, goals, b"")
+    }
+
+    fn named(directory: &str, variables: &[&str], goals: &[&str], switches: &[u8]) -> String {
         let variables: Vec<&[u8]> = variables.iter().map(|v| v.as_bytes()).collect();
         let goals: Vec<&[u8]> = goals.iter().map(|g| g.as_bytes()).collect();
-        name_for(Path::new(directory), &variables, &goals)
+        name_for(Path::new(directory), &variables, &goals, switches)
+    }
+
+    /// `-B`, `-W`, `-o`, `-f`, `-I`, `--eval`, `--shuffle` and `-j` each make
+    /// one composition a different composition, so a run given one of them
+    /// does not open a graph composed without it.
+    #[test]
+    fn a_switch_that_shapes_a_read_names_another() {
+        assert_ne!(named("/tmp", &[], &[], b""), named("/tmp", &[], &[], b"-B"));
     }
 
     #[test]

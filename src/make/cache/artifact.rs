@@ -381,28 +381,40 @@ pub(crate) struct RecipeUnitArtifact {
 
 /// Everything the build over a loaded graph needs that is not in the graph.
 ///
-/// Edges are named by their first output's path rather than by index, so the
-/// record does not depend on how the graph numbered them.
+/// Nodes and edges are named by WHERE THEY SIT in the graph's arenas rather
+/// than by a path. A path does not name an edge: a recursive front end gives
+/// two units' identically spelt targets nodes of their own, and such a node
+/// answers to no lookup at all — on the kernel `include/config/auto.conf` is
+/// one, and it is a wrapper the composition settles clean. The record and the
+/// graph are one pair, refused unless the digest still matches, so a position
+/// in that graph is a name the record may use.
 #[derive(Clone)]
 pub(crate) struct BuildArtifact {
     /// The Makefiles the final read consulted that a rule says how to remake,
     /// in the order the read reached them.
-    pub(crate) remakes: Vec<Vec<u8>>,
-    pub(crate) forgiven: Vec<Vec<u8>>,
-    pub(crate) unread: Vec<Vec<u8>>,
-    pub(crate) complaints: Vec<(Vec<u8>, String)>,
-    /// Every pass's staged work in pass order, the makefile-phase segments and
-    /// the goal-phase ones apart, each name once.
+    pub(crate) remakes: Vec<usize>,
+    pub(crate) forgiven: Vec<usize>,
+    pub(crate) unread: Vec<usize>,
+    pub(crate) complaints: Vec<(usize, String)>,
+    /// Every pass's staged work in pass order, the makefile-phase segments
+    /// and the goal-phase ones apart, each name once.
+    ///
+    /// Paths rather than places, because these are the one list gathered
+    /// ACROSS passes and each pass composes a graph of its own: a place in
+    /// one pass's arena names nothing in the next one's. What they decide is
+    /// only which phase a piece of staged work belongs to — what gets built
+    /// is every edge the graph carries a prebuilt mark for, which is the same
+    /// closure and needs no name at all.
     pub(crate) staged_for_makefiles: Vec<Vec<u8>>,
     pub(crate) staged_for_goals: Vec<Vec<u8>>,
     /// The recursive wrappers the composition settled clean, each with the
     /// staged work its freshness was read from.
-    pub(crate) clean_wrappers: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+    pub(crate) clean_wrappers: Vec<(usize, Vec<usize>)>,
     pub(crate) units: Vec<RecipeUnitArtifact>,
-    /// Each deferred edge: its output, the unit whose evaluator expands it, and
-    /// which of that unit's recipes it is.
-    pub(crate) deferred: Vec<(Vec<u8>, Vec<u8>, DeferredRecipeId)>,
-    pub(crate) settled: Vec<(Vec<u8>, SettledSteps)>,
+    /// Each deferred edge, the unit whose evaluator expands it, and which of
+    /// that unit's recipes it is.
+    pub(crate) deferred: Vec<(usize, Vec<u8>, DeferredRecipeId)>,
+    pub(crate) settled: Vec<(usize, SettledSteps)>,
     /// The root unit's settled `MAKEFLAGS` and the widest budget any unit asked
     /// to run at.
     pub(crate) makeflags: String,
@@ -411,20 +423,20 @@ pub(crate) struct BuildArtifact {
 
 impl BuildArtifact {
     fn encode(&self, w: &mut Writer<'_>) -> io::Result<()> {
-        for names in [&self.remakes, &self.forgiven, &self.unread] {
-            w.names(names)?;
+        for places in [&self.remakes, &self.forgiven, &self.unread] {
+            w.places(places)?;
         }
         w.len(self.complaints.len())?;
-        for (name, complaint) in &self.complaints {
-            w.bytes(name)?;
+        for (at, complaint) in &self.complaints {
+            w.len(*at)?;
             w.bytes(complaint.as_bytes())?;
         }
         w.names(&self.staged_for_makefiles)?;
         w.names(&self.staged_for_goals)?;
         w.len(self.clean_wrappers.len())?;
         for (wrapper, staged) in &self.clean_wrappers {
-            w.bytes(wrapper)?;
-            w.names(staged)?;
+            w.len(*wrapper)?;
+            w.places(staged)?;
         }
         w.len(self.units.len())?;
         for unit in &self.units {
@@ -433,14 +445,14 @@ impl BuildArtifact {
             w.bytes(unit.directory.as_os_str().as_encoded_bytes())?;
         }
         w.len(self.deferred.len())?;
-        for (output, unit, recipe) in &self.deferred {
-            w.bytes(output)?;
+        for (edge, unit, recipe) in &self.deferred {
+            w.len(*edge)?;
             w.bytes(unit)?;
             w.len(*recipe)?;
         }
         w.len(self.settled.len())?;
-        for (output, steps) in &self.settled {
-            w.bytes(output)?;
+        for (edge, steps) in &self.settled {
+            w.len(*edge)?;
             let (ordinary, while_remaking) = steps.parts();
             w.steps(ordinary)?;
             w.option(while_remaking, Writer::steps)?;
@@ -450,18 +462,18 @@ impl BuildArtifact {
     }
 
     fn decode(r: &mut Reader<'_>) -> Option<Self> {
-        let (remakes, forgiven, unread) = (r.names()?, r.names()?, r.names()?);
+        let (remakes, forgiven, unread) = (r.places()?, r.places()?, r.places()?);
         let mut complaints = Vec::new();
         for _ in 0..r.len()? {
-            let name = r.bytes()?.to_vec();
-            complaints.push((name, String::from_utf8(r.bytes()?.to_vec()).ok()?));
+            let at = r.len()?;
+            complaints.push((at, String::from_utf8(r.bytes()?.to_vec()).ok()?));
         }
         let staged_for_makefiles = r.names()?;
         let staged_for_goals = r.names()?;
         let mut clean_wrappers = Vec::new();
         for _ in 0..r.len()? {
-            let wrapper = r.bytes()?.to_vec();
-            clean_wrappers.push((wrapper, r.names()?));
+            let wrapper = r.len()?;
+            clean_wrappers.push((wrapper, r.places()?));
         }
         let mut units = Vec::new();
         for _ in 0..r.len()? {
@@ -476,16 +488,16 @@ impl BuildArtifact {
         }
         let mut deferred = Vec::new();
         for _ in 0..r.len()? {
-            let output = r.bytes()?.to_vec();
+            let edge = r.len()?;
             let unit = r.bytes()?.to_vec();
-            deferred.push((output, unit, r.len()?));
+            deferred.push((edge, unit, r.len()?));
         }
         let mut settled = Vec::new();
         for _ in 0..r.len()? {
-            let output = r.bytes()?.to_vec();
+            let edge = r.len()?;
             let ordinary = r.steps()?;
             let while_remaking = r.option(Reader::steps)?;
-            settled.push((output, SettledSteps::from_parts(ordinary, while_remaking)));
+            settled.push((edge, SettledSteps::from_parts(ordinary, while_remaking)));
         }
         let makeflags = String::from_utf8(r.bytes()?.to_vec()).ok()?;
         let job_budget = r.len()?;
@@ -510,6 +522,12 @@ impl Writer<'_> {
     fn names(&mut self, names: &[Vec<u8>]) -> io::Result<()> {
         self.len(names.len())?;
         names.iter().try_for_each(|name| self.bytes(name))
+    }
+
+    /// A list of places in the graph's arenas.
+    fn places(&mut self, places: &[usize]) -> io::Result<()> {
+        self.len(places.len())?;
+        places.iter().try_for_each(|at| self.len(*at))
     }
 
     fn recipe_environment(
@@ -590,6 +608,14 @@ impl Reader<'_> {
         (0..count)
             .map(|_| self.bytes().map(<[u8]>::to_vec))
             .collect()
+    }
+
+    fn places(&mut self) -> Option<Vec<usize>> {
+        let count = self.len()?;
+        if count > self.bytes.len() {
+            return None;
+        }
+        (0..count).map(|_| self.len()).collect()
     }
 
     fn recipe_environment(&mut self) -> Option<Vec<(OsString, Option<OsString>)>> {
@@ -730,13 +756,13 @@ mod tests {
                 },
             ],
             build: Some(BuildArtifact {
-                remakes: vec![b"gen.mk".to_vec()],
-                forgiven: vec![b"gen.mk".to_vec()],
+                remakes: vec![7],
+                forgiven: vec![7],
                 unread: Vec::new(),
-                complaints: vec![(b"gen.mk".to_vec(), "no such file".to_owned())],
+                complaints: vec![(7, "no such file".to_owned())],
                 staged_for_makefiles: Vec::new(),
                 staged_for_goals: vec![b"gen.txt".to_vec(), b"sub/out".to_vec()],
-                clean_wrappers: vec![(b"lib".to_vec(), vec![b"lib/a.o".to_vec()])],
+                clean_wrappers: vec![(2, vec![11, 12])],
                 units: vec![RecipeUnitArtifact {
                     key: b"root".to_vec(),
                     layout: CommandLayout {
@@ -748,9 +774,9 @@ mod tests {
                     },
                     directory: PathBuf::from("/src"),
                 }],
-                deferred: vec![(b"a.o".to_vec(), b"root".to_vec(), 3)],
+                deferred: vec![(4, b"root".to_vec(), 3)],
                 settled: vec![(
-                    b"b.o".to_vec(),
+                    5,
                     SettledSteps::from_parts(
                         vec![LateStep {
                             launch: Launch::Direct(Box::new(DirectLaunch {
