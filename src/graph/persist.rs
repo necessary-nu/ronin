@@ -28,7 +28,6 @@ use crate::graph::searched::SettledView;
 use crate::names::{Bindings, VarId};
 use crate::util::{EvalPart, EvalString};
 use std::io::{self, Write};
-#[cfg(test)]
 use {
     super::{Edge, Graph, Node},
     crate::env::{EnvState, Environment, Pool, Rule},
@@ -321,7 +320,6 @@ impl Writer<'_> {
 
 /// How many of each arena the file says it holds, against which every
 /// identifier in it is checked.
-#[cfg(test)]
 #[derive(Clone, Copy)]
 struct Counts {
     names: usize,
@@ -334,7 +332,6 @@ struct Counts {
 }
 
 /// The graph `bytes` holds, or `None` for bytes that do not hold one.
-#[cfg(test)]
 pub(crate) fn read(bytes: &[u8]) -> Option<BuildGraph> {
     let mut r = Reader { bytes, at: 0 };
     if r.take(MAGIC.len())? != MAGIC || r.u32()? != VERSION {
@@ -429,7 +426,6 @@ pub(crate) fn read(bytes: &[u8]) -> Option<BuildGraph> {
 }
 
 /// Enter `indexed` into the path index, refusing a path entered twice.
-#[cfg(test)]
 fn index_nodes(arenas: &mut Graph, indexed: IdVec<NodeId>) -> Option<()> {
     for node in indexed {
         let span = arenas.nodes[node.index()].path;
@@ -447,7 +443,6 @@ fn index_nodes(arenas: &mut Graph, indexed: IdVec<NodeId>) -> Option<()> {
     Some(())
 }
 
-#[cfg(test)]
 fn read_edge(r: &mut Reader<'_>, counts: Counts) -> Option<Edge> {
     let rule = r.option(|r| r.id(counts.rules).map(RuleId::from_index))?;
     let pool = r.option(|r| r.id(counts.pools).map(PoolId::from_index))?;
@@ -492,7 +487,6 @@ fn read_edge(r: &mut Reader<'_>, counts: Counts) -> Option<Edge> {
     Some(edge)
 }
 
-#[cfg(test)]
 fn read_side_tables(r: &mut Reader<'_>, counts: Counts, arenas: &mut Graph) -> Option<()> {
     for _ in 0..r.len()? {
         let node = NodeId::from_index(r.id(counts.nodes)?);
@@ -585,13 +579,11 @@ fn read_side_tables(r: &mut Reader<'_>, counts: Counts, arenas: &mut Graph) -> O
     Some(())
 }
 
-#[cfg(test)]
 struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
-#[cfg(test)]
 impl<'a> Reader<'a> {
     fn take(&mut self, count: usize) -> Option<&'a [u8]> {
         let taken = self.bytes.get(self.at..self.at.checked_add(count)?)?;
@@ -958,6 +950,41 @@ default all
         let read_back = read(&written(&graph)).expect("the bytes hold a graph");
         assert_eq!(describe(&read_back), describe(&graph));
         assert_eq!(read_back.arenas().prebuilt, marked);
+    }
+
+    #[test]
+    fn unmarking_puts_every_replaced_rule_back() {
+        let mut graph = graph_of(MANIFEST);
+        let before = describe(&graph);
+        let phony = graph.rule(graph.root(), b"phony").expect("the phony rule");
+        let prog = graph.lookup(b"prog").expect("prog");
+        graph.mark_subgraphs_prebuilt(&[prog], phony);
+        assert_ne!(describe(&graph), before, "the marks changed the graph");
+        let marks = graph.unmark_prebuilt();
+        assert_eq!(
+            describe(&graph),
+            before,
+            "a graph with its marks off is the graph that was composed"
+        );
+        graph.remark_prebuilt(marks);
+        assert_ne!(
+            describe(&graph),
+            before,
+            "and they go back on for a run that has done the work"
+        );
+    }
+
+    #[test]
+    fn a_twice_marked_edge_wears_its_first_rule() {
+        let mut graph = graph_of(MANIFEST);
+        let before = describe(&graph);
+        let phony = graph.rule(graph.root(), b"phony").expect("the phony rule");
+        let prog = graph.lookup(b"prog").expect("prog");
+        let a = graph.lookup(b"a.o").expect("a.o");
+        graph.mark_subgraphs_prebuilt(&[a], phony);
+        graph.mark_subgraphs_prebuilt(&[prog], phony);
+        graph.unmark_prebuilt();
+        assert_eq!(describe(&graph), before);
     }
 
     #[test]

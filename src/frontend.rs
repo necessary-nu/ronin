@@ -290,6 +290,13 @@ pub struct BuildGraph {
     pub(crate) canonical: Vec<u8>,
 }
 
+/// The prebuilt marks a graph was written with, while they are off it.
+///
+/// Opaque because nothing outside the graph has any business reading which
+/// edge wore which rule: a caller either puts the whole table back or does
+/// not. See [`BuildGraph::unmark_prebuilt`].
+pub(crate) struct PrebuiltMarks(Vec<(crate::graph::EdgeId, Option<crate::env::RuleId>)>);
+
 impl Default for BuildGraph {
     fn default() -> Self {
         Self::new()

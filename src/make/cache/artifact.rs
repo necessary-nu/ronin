@@ -24,7 +24,6 @@ use kati::session::{GroundAnswer, GroundQuestion};
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
-#[cfg(test)]
 use {crate::subprocess::DirectLaunch, crate::util::BString};
 
 /// What the reader checks before it believes a byte of the rest.
@@ -118,7 +117,6 @@ impl Artifact {
     }
 
     /// The artifact `bytes` holds, or `None` for bytes that do not hold one.
-    #[cfg(test)]
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let mut r = Reader { bytes, at: 0 };
         if r.take(MAGIC.len())? != MAGIC || r.u32()? != super::FORMAT_VERSION {
@@ -162,7 +160,6 @@ impl Artifact {
     }
 }
 
-#[cfg(test)]
 fn os_string(bytes: &[u8]) -> OsString {
     use std::os::unix::ffi::OsStringExt as _;
     OsString::from_vec(bytes.to_vec())
@@ -184,7 +181,6 @@ const fn question_tag(question: GroundQuestion) -> u8 {
     }
 }
 
-#[cfg(test)]
 const fn question_of(tag: u8) -> Option<GroundQuestion> {
     Some(match tag {
         1 => GroundQuestion::Shell,
@@ -254,13 +250,11 @@ impl Writer<'_> {
     }
 }
 
-#[cfg(test)]
 struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
-#[cfg(test)]
 impl<'a> Reader<'a> {
     fn take(&mut self, count: usize) -> Option<&'a [u8]> {
         let taken = self.bytes.get(self.at..self.at.checked_add(count)?)?;
@@ -347,7 +341,6 @@ fn encode_origin(w: &mut Writer<'_>, origin: &ChildOrigin) -> io::Result<()> {
     w.recipe_environment(&origin.recipe_environment)
 }
 
-#[cfg(test)]
 fn decode_origin(r: &mut Reader<'_>) -> Option<ChildOrigin> {
     let mut words = Vec::new();
     for _ in 0..r.len()? {
@@ -456,7 +449,6 @@ impl BuildArtifact {
         w.len(self.job_budget)
     }
 
-    #[cfg(test)]
     fn decode(r: &mut Reader<'_>) -> Option<Self> {
         let (remakes, forgiven, unread) = (r.names()?, r.names()?, r.names()?);
         let mut complaints = Vec::new();
@@ -577,7 +569,6 @@ impl Writer<'_> {
     }
 }
 
-#[cfg(test)]
 impl Reader<'_> {
     fn bool(&mut self) -> Option<bool> {
         match self.u8()? {

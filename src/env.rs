@@ -47,7 +47,6 @@ pub(crate) struct Pool {
 }
 
 impl Pool {
-    #[cfg(test)]
     pub(crate) const fn new(name: BString, depth: Option<NonZeroUsize>) -> Self {
         Self { name, depth }
     }
@@ -73,7 +72,6 @@ impl EnvState {
 
     /// A state read back from a file, whose pools the graph in the file
     /// declared rather than [`Self::new`].
-    #[cfg(test)]
     pub(crate) const fn from_parts(root: EnvironmentId, pools: BTreeMap<BString, PoolId>) -> Self {
         Self { root, pools }
     }

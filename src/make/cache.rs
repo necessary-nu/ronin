@@ -21,6 +21,7 @@
 //! artifact it never opens rather than one it misreads.
 
 pub(crate) mod artifact;
+pub(crate) mod load;
 
 use crate::htab::rapidhashv1;
 use std::path::{Path, PathBuf};

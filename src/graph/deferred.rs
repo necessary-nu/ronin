@@ -94,6 +94,42 @@ impl Graph {
         }
     }
 
+    /// Put back the rule every prebuilt mark replaced, and forget the marks.
+    ///
+    /// The phony rule an edge wears here says the work was done by THIS
+    /// invocation. A graph read from a file was marked up by a run that is
+    /// over, and this invocation has done none of that work: it has to reach
+    /// the same edges and decide about them against the disk as it stands, so
+    /// the marks come off before anything is planned.
+    ///
+    /// Undone in reverse, because one edge can be marked more than once and
+    /// the rule to put back is the one it wore before the FIRST mark. What
+    /// comes back is the table as it stood, which is what puts them on again
+    /// once this invocation has done the work for itself.
+    pub(crate) fn unmark_prebuilt(&mut self) -> Vec<(EdgeId, Option<RuleId>)> {
+        let marks = std::mem::take(&mut self.prebuilt);
+        for (edge, previous) in marks.iter().rev() {
+            self.edge_mut(*edge).rule = *previous;
+        }
+        marks
+    }
+
+    /// Mark again what [`Self::unmark_prebuilt`] took off, for a run that has
+    /// since built that work itself.
+    ///
+    /// The phony rule is the graph's own: a graph read from a file names it in
+    /// the same arena the marks name their edges in. A graph with no phony
+    /// rule at all has no marked edge either, so there is nothing to put back.
+    pub(crate) fn remark_prebuilt(&mut self, marks: Vec<(EdgeId, Option<RuleId>)>) {
+        let Some(phony) = self.phony_rule else {
+            return;
+        };
+        for (edge, _) in &marks {
+            self.edge_mut(*edge).rule = Some(phony);
+        }
+        self.prebuilt = marks;
+    }
+
     /// Every edge that names a `dyndep` binding, in the order they were
     /// resolved.
     pub(crate) fn dyndep_edges(&self) -> &[EdgeId] {

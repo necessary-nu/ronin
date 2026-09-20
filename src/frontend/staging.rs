@@ -12,9 +12,26 @@
 //! Nothing in a Ninja manifest reaches here: a manifest states an edge whole,
 //! and a graph parsed from one is never in the middle of being decided.
 
-use super::{BuildGraph, Edge, Node, Rule};
+use super::{BuildGraph, Edge, Node, PrebuiltMarks, Rule};
 
 impl BuildGraph {
+    /// Take off every prebuilt mark a graph read from a file was written with.
+    ///
+    /// The mark says the work behind an edge was done by THIS invocation, and
+    /// a run that read the graph rather than composing it has done none of it.
+    /// It comes off before anything is planned, so the work is reached and
+    /// decided about against the disk as it stands, and goes back on with
+    /// [`Self::remark_prebuilt`] once this run has built it.
+    pub(crate) fn unmark_prebuilt(&mut self) -> PrebuiltMarks {
+        PrebuiltMarks(self.arenas.unmark_prebuilt())
+    }
+
+    /// Put back what [`Self::unmark_prebuilt`] took off, for a run that has
+    /// since built that work itself.
+    pub(crate) fn remark_prebuilt(&mut self, marks: PrebuiltMarks) {
+        self.arenas.remark_prebuilt(marks.0);
+    }
+
     /// Replace the command rule of an edge whose structure was staged first.
     pub(crate) fn set_edge_rule(&mut self, edge: Edge, rule: Rule) {
         self.arenas.edge_mut(edge.0).rule = Some(rule.0);

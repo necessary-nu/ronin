@@ -650,7 +650,6 @@ impl SettledSteps {
     }
 
     /// Steps read back from a record.
-    #[cfg(test)]
     pub(crate) const fn from_parts(
         ordinary: Vec<crate::build::LateStep>,
         while_remaking: Option<Vec<crate::build::LateStep>>,
